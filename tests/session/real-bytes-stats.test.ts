@@ -279,33 +279,33 @@ describe("getRealBytesStats (Phase 8 renderer source-of-truth)", () => {
   // Architect-safe choice: legacy chunks (empty session_id) are NOT backfilled.
   // Old sessions stay low; new sessions populate honestly.
 
-  test("8.7 getContentBytesForSession sums LENGTH(title)+LENGTH(content) for FK-attributed chunks", () => {
+  test("8.7 getContentBytesForSession sums LENGTH(title)+LENGTH(content) for FK-attributed chunks", async () => {
     const sid = `chunk-${randomUUID()}`;
     const contentDbPath = join(mkSessionsDir(), `content-${randomUUID()}.db`);
     const store = new ContentStore(contentDbPath);
     try {
       // Two attributed chunks for the target session.
-      store.indexPlainText(
+      await store.indexPlainText(
         "alpha line one\nalpha line two",
         "src/alpha.ts",
         20,
         { sessionId: sid, eventId: "evt-1" },
       );
-      store.indexPlainText(
+      await store.indexPlainText(
         "beta payload that should be summed",
         "src/beta.ts",
         20,
         { sessionId: sid, eventId: "evt-2" },
       );
       // One chunk attributed to a DIFFERENT session — must be excluded.
-      store.indexPlainText(
+      await store.indexPlainText(
         "noise from a sibling session",
         "src/noise.ts",
         20,
         { sessionId: "other-session", eventId: "evt-x" },
       );
       // One legacy chunk with empty session_id — must be excluded (no backfill).
-      store.indexPlainText(
+      await store.indexPlainText(
         "legacy chunk no FK",
         "src/legacy.ts",
         20,
@@ -326,20 +326,20 @@ describe("getRealBytesStats (Phase 8 renderer source-of-truth)", () => {
     expect(bytes).toBeLessThan(200);
   });
 
-  test("8.8 getContentBytesForSession returns 0 for missing DB or unknown session", () => {
+  test("8.8 getContentBytesForSession returns 0 for missing DB or unknown session", async () => {
     expect(getContentBytesForSession("any-sid", join(tmpdir(), `missing-${randomUUID()}.db`))).toBe(0);
 
     const contentDbPath = join(mkSessionsDir(), `content-${randomUUID()}.db`);
     const store = new ContentStore(contentDbPath);
     try {
-      store.indexPlainText("payload", "src/x.ts", 20, { sessionId: "real-sid", eventId: "evt" });
+      await store.indexPlainText("payload", "src/x.ts", 20, { sessionId: "real-sid", eventId: "evt" });
     } finally {
       store.close();
     }
     expect(getContentBytesForSession("no-such-session", contentDbPath)).toBe(0);
   });
 
-  test("8.9 getRealBytesStats with contentDbPath folds chunk bytes into bytesAvoided + totalSavedTokens", () => {
+  test("8.9 getRealBytesStats with contentDbPath folds chunk bytes into bytesAvoided + totalSavedTokens", async () => {
     const dir = mkSessionsDir();
     const sid = `int-${randomUUID()}`;
     const dbPath = dbPathFor(dir, "cafebabecafebabe");
@@ -352,7 +352,7 @@ describe("getRealBytesStats (Phase 8 renderer source-of-truth)", () => {
     try {
       // Big enough payload that the chunk byte sum dwarfs event-data noise
       // and proves the value flowed through, not just got rounded in.
-      store.indexPlainText(
+      await store.indexPlainText(
         "X".repeat(10_000),
         "fixture.txt",
         20,
@@ -386,18 +386,18 @@ describe("getRealBytesStats (Phase 8 renderer source-of-truth)", () => {
     const store = new ContentStore(contentDbPath);
     try {
       // Three chunks attributed to three different sessions — all should sum.
-      store.indexPlainText("A".repeat(5_000), "src/a.ts", 20, {
+      await store.indexPlainText("A".repeat(5_000), "src/a.ts", 20, {
         sessionId: "sess-A",
         eventId: "evt-a",
       });
-      store.indexPlainText("B".repeat(5_000), "src/b.ts", 20, {
+      await store.indexPlainText("B".repeat(5_000), "src/b.ts", 20, {
         sessionId: "sess-B",
         eventId: "evt-b",
       });
       // One legacy chunk with no session FK — MUST also sum (this is the
       // whole point of the lifetime aggregate; per-session filter excludes
       // these but lifetime must include them).
-      store.indexPlainText("C".repeat(5_000), "src/c.ts", 20);
+      await store.indexPlainText("C".repeat(5_000), "src/c.ts", 20);
     } finally {
       store.close();
     }
@@ -429,7 +429,7 @@ describe("getRealBytesStats (Phase 8 renderer source-of-truth)", () => {
   // FIRST adapter's content bytes only, masking 50+ MB of indexed payload
   // across the other 14 adapters. This test pins the contract that
   // contentBytes accumulates across every adapter's content/*.db.
-  test("lifetime contentBytes accumulates across multiple adapter content DBs", () => {
+  test("lifetime contentBytes accumulates across multiple adapter content DBs", async () => {
     const home = mkdtempSync(join(tmpdir(), "multi-content-"));
     cleanups.push(() => { try { rmSync(home, { recursive: true, force: true }); } catch {} });
 
@@ -453,11 +453,11 @@ describe("getRealBytesStats (Phase 8 renderer source-of-truth)", () => {
 
     const a = new ContentStore(claudeContent);
     try {
-      a.indexPlainText("X".repeat(7_000), "src/x.ts", 20);
+      await a.indexPlainText("X".repeat(7_000), "src/x.ts", 20);
     } finally { a.close(); }
     const b = new ContentStore(codexContent);
     try {
-      b.indexPlainText("Y".repeat(11_000), "src/y.ts", 20);
+      await b.indexPlainText("Y".repeat(11_000), "src/y.ts", 20);
     } finally { b.close(); }
 
     const r = getMultiAdapterRealBytesStats({ home });

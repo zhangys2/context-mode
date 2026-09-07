@@ -93,7 +93,7 @@ describe("Schema & Lifecycle", () => {
     }
   });
 
-  test("Old schema detected and migrated to new schema", () => {
+  test("Old schema detected and migrated to new schema", async () => {
     const dbPath = join(
       tmpdir(),
       `context-mode-test-migrate-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
@@ -171,7 +171,7 @@ describe("Schema & Lifecycle", () => {
     expect(sourceCount.cnt).toBe(1);
 
     // Store still functional — can index new content
-    const result = store.index({ content: "# Test\n\nNew content after migration.", source: "post-migration" });
+    const result = await store.index({ content: "# Test\n\nNew content after migration.", source: "post-migration" });
     expect(result.totalChunks).toBeGreaterThan(0);
 
     checkDb.close();
@@ -185,9 +185,9 @@ describe("Schema & Lifecycle", () => {
 });
 
 describe("Basic Indexing", () => {
-  test("index simple markdown content", () => {
+  test("index simple markdown content", async () => {
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       content: "# Hello\n\nThis is a test document.",
       source: "test-doc",
     });
@@ -198,9 +198,9 @@ describe("Basic Indexing", () => {
     store.close();
   });
 
-  test("index content with code blocks", () => {
+  test("index content with code blocks", async () => {
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       content:
         "# API Guide\n\n```javascript\nconsole.log('hello');\n```\n\n## Usage\n\nSome text.",
       source: "api-guide",
@@ -210,16 +210,16 @@ describe("Basic Indexing", () => {
     store.close();
   });
 
-  test("index empty content throws (falsy content requires path)", () => {
+  test("index empty content throws (falsy content requires path)", async () => {
     const store = createStore();
     // Empty string is falsy — same as not providing content
-    assert.throws(() => store.index({ content: "", source: "empty" }), /Either content or path/);
+    await assert.rejects(store.index({ content: "", source: "empty" }), /Either content or path/);
     store.close();
   });
 
-  test("index whitespace-only content returns 0 chunks", () => {
+  test("index whitespace-only content returns 0 chunks", async () => {
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       content: "   \n\n   \n",
       source: "whitespace",
     });
@@ -227,9 +227,9 @@ describe("Basic Indexing", () => {
     store.close();
   });
 
-  test("index from file path", () => {
+  test("index from file path", async () => {
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       path: join(fixtureDir, "context7-react-docs.md"),
       source: "Context7: React useEffect",
     });
@@ -239,19 +239,19 @@ describe("Basic Indexing", () => {
     store.close();
   });
 
-  test("index throws when neither content nor path provided", () => {
+  test("index throws when neither content nor path provided", async () => {
     const store = createStore();
-    assert.throws(() => store.index({}), /Either content or path/);
+    await assert.rejects(store.index({}), /Either content or path/);
     store.close();
   });
 
-  test("index reads file when content is empty string and path is provided (regression #350)", () => {
+  test("index reads file when content is empty string and path is provided (regression #350)", async () => {
     // Some MCP clients send `content: ""` together with `path`. The previous
     // implementation used `content ?? readFileSync(path)` which kept the empty
     // string and indexed 0 chunks. Empty content + a valid path must fall
     // back to reading the file.
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       content: "",
       path: join(fixtureDir, "context7-react-docs.md"),
       source: "Context7: empty-content path repro",
@@ -262,9 +262,9 @@ describe("Basic Indexing", () => {
     store.close();
   });
 
-  test("stats update after indexing", () => {
+  test("stats update after indexing", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# Title\n\nSome content.\n\n## Section\n\nMore content.",
       source: "doc-1",
     });
@@ -274,7 +274,7 @@ describe("Basic Indexing", () => {
     store.close();
   });
 
-  test("attribution flows through to chunks.session_id and chunks.event_id (#FK)", () => {
+  test("attribution flows through to chunks.session_id and chunks.event_id (#FK)", async () => {
     // SLICE 1: index*() must accept an optional `attribution` so chunks rows
     // carry the session/event that triggered them. Hardcoded "" defeats the
     // FK to session_events that powers per-session honest-savings stats.
@@ -283,20 +283,20 @@ describe("Basic Indexing", () => {
       `context-mode-attrfk-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
     );
     const store = new ContentStore(dbPath);
-    store.index({
+    await store.index({
       content: "# Hello\n\nAttribution test body.",
       source: "attr-doc",
       attribution: { sessionId: "sess-FK-1", eventId: "evt-FK-9" },
     } as Parameters<typeof store.index>[0]);
 
-    store.indexPlainText(
+    await store.indexPlainText(
       "log line one\nlog line two\nlog line three",
       "attr-plain",
       20,
       { sessionId: "sess-FK-2", eventId: "evt-FK-10" },
     );
 
-    store.indexJSON(
+    await store.indexJSON(
       JSON.stringify({ a: 1, b: { c: "x" } }),
       "attr-json",
       undefined,
@@ -329,9 +329,9 @@ describe("Basic Indexing", () => {
 });
 
 describe("Heading-Aware Chunking", () => {
-  test("splits on H1-H4 headings", () => {
+  test("splits on H1-H4 headings", async () => {
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       content:
         "# H1\n\nContent 1\n\n## H2\n\nContent 2\n\n### H3\n\nContent 3\n\n#### H4\n\nContent 4",
       source: "headings",
@@ -340,9 +340,9 @@ describe("Heading-Aware Chunking", () => {
     store.close();
   });
 
-  test("splits on --- separators (Context7 format)", () => {
+  test("splits on --- separators (Context7 format)", async () => {
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       content:
         "### Section A\n\nContent A\n\n---\n\n### Section B\n\nContent B\n\n---\n\n### Section C\n\nContent C",
       source: "context7-style",
@@ -351,9 +351,9 @@ describe("Heading-Aware Chunking", () => {
     store.close();
   });
 
-  test("keeps code blocks intact (never split mid-block)", () => {
+  test("keeps code blocks intact (never split mid-block)", async () => {
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       content:
         '# Example\n\n```javascript\nfunction hello() {\n  console.log("world");\n}\nhello();\n```\n\nMore text after code.',
       source: "code-intact",
@@ -374,9 +374,9 @@ describe("Heading-Aware Chunking", () => {
     store.close();
   });
 
-  test("tracks heading hierarchy in titles", () => {
+  test("tracks heading hierarchy in titles", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content:
         "# React\n\n## Hooks\n\n### useEffect\n\nEffect documentation here.",
       source: "hierarchy",
@@ -398,9 +398,9 @@ describe("Heading-Aware Chunking", () => {
     store.close();
   });
 
-  test("marks chunks with code as 'code' contentType", () => {
+  test("marks chunks with code as 'code' contentType", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content:
         "# Prose\n\nJust text.\n\n# Code\n\n```python\nprint('hello')\n```",
       source: "mixed",
@@ -419,9 +419,9 @@ describe("Heading-Aware Chunking", () => {
 });
 
 describe("BM25 Search", () => {
-  test("basic keyword search returns results", () => {
+  test("basic keyword search returns results", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content:
         "# Authentication\n\nUse JWT tokens for API auth.\n\n# Caching\n\nRedis for session caching.",
       source: "docs",
@@ -435,9 +435,9 @@ describe("BM25 Search", () => {
     store.close();
   });
 
-  test("title match weighted higher than content match", () => {
+  test("title match weighted higher than content match", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content:
         "# useEffect\n\nThe effect hook.\n\n# useState\n\nuseEffect is mentioned here in passing.",
       source: "hooks",
@@ -452,9 +452,9 @@ describe("BM25 Search", () => {
     store.close();
   });
 
-  test("porter stemming matches word variants", () => {
+  test("porter stemming matches word variants", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content:
         "# Connecting\n\nEstablish connections to the database.\n\n# Caching\n\nCache your responses.",
       source: "stemming",
@@ -470,9 +470,9 @@ describe("BM25 Search", () => {
     store.close();
   });
 
-  test("search with no results returns empty array", () => {
+  test("search with no results returns empty array", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# React\n\nComponent lifecycle.",
       source: "react",
     });
@@ -481,9 +481,9 @@ describe("BM25 Search", () => {
     store.close();
   });
 
-  test("limit parameter controls result count", () => {
+  test("limit parameter controls result count", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content:
         "# A\n\nApple.\n\n# B\n\nBanana.\n\n# C\n\nCherry.\n\n# D\n\nDate.",
       source: "fruits",
@@ -497,9 +497,9 @@ describe("BM25 Search", () => {
     store.close();
   });
 
-  test("results include source label", () => {
+  test("results include source label", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# Setup\n\nInstall the package.",
       source: "Context7: React docs",
     });
@@ -509,9 +509,9 @@ describe("BM25 Search", () => {
     store.close();
   });
 
-  test("results include rank score", () => {
+  test("results include rank score", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# Test\n\nSome test content here.",
       source: "ranked",
     });
@@ -523,17 +523,17 @@ describe("BM25 Search", () => {
 });
 
 describe("Multi-Source Indexing", () => {
-  test("search across multiple indexed sources", () => {
+  test("search across multiple indexed sources", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# React Hooks\n\nuseEffect for side effects.",
       source: "Context7: React",
     });
-    store.index({
+    await store.index({
       content: "# Supabase Auth\n\nRow Level Security policies.",
       source: "Context7: Supabase",
     });
-    store.index({
+    await store.index({
       content: "# Tailwind\n\nResponsive breakpoints with sm, md, lg.",
       source: "Context7: Tailwind",
     });
@@ -555,13 +555,13 @@ describe("Multi-Source Indexing", () => {
     store.close();
   });
 
-  test("re-indexing same source replaces previous entry (dedup)", () => {
+  test("re-indexing same source replaces previous entry (dedup)", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# Part 1\n\nFirst batch.",
       source: "incremental",
     });
-    store.index({
+    await store.index({
       content: "# Part 2\n\nSecond batch.",
       source: "incremental",
     });
@@ -573,13 +573,13 @@ describe("Multi-Source Indexing", () => {
 });
 
 describe("Fixture-Based Tests (Real MCP Output)", () => {
-  test("Context7 React docs: index and search code examples", () => {
+  test("Context7 React docs: index and search code examples", async () => {
     const store = createStore();
     const content = readFileSync(
       join(fixtureDir, "context7-react-docs.md"),
       "utf-8",
     );
-    const result = store.index({
+    const result = await store.index({
       content,
       source: "Context7: React useEffect",
     });
@@ -605,13 +605,13 @@ describe("Fixture-Based Tests (Real MCP Output)", () => {
     store.close();
   });
 
-  test("Context7 Next.js docs: index and search", () => {
+  test("Context7 Next.js docs: index and search", async () => {
     const store = createStore();
     const content = readFileSync(
       join(fixtureDir, "context7-nextjs-docs.md"),
       "utf-8",
     );
-    const result = store.index({
+    const result = await store.index({
       content,
       source: "Context7: Next.js App Router",
     });
@@ -624,13 +624,13 @@ describe("Fixture-Based Tests (Real MCP Output)", () => {
     store.close();
   });
 
-  test("Context7 Tailwind docs: index and search", () => {
+  test("Context7 Tailwind docs: index and search", async () => {
     const store = createStore();
     const content = readFileSync(
       join(fixtureDir, "context7-tailwind-docs.md"),
       "utf-8",
     );
-    const result = store.index({
+    const result = await store.index({
       content,
       source: "Context7: Tailwind CSS",
     });
@@ -642,7 +642,7 @@ describe("Fixture-Based Tests (Real MCP Output)", () => {
     store.close();
   });
 
-  test("MCP tools JSON: index and search tool signatures", () => {
+  test("MCP tools JSON: index and search tool signatures", async () => {
     const store = createStore();
     // Convert JSON to searchable markdown format
     const raw = readFileSync(join(fixtureDir, "mcp-tools.json"), "utf-8");
@@ -655,7 +655,7 @@ describe("Fixture-Based Tests (Real MCP Output)", () => {
       )
       .join("\n\n---\n\n");
 
-    const result = store.index({
+    const result = await store.index({
       content: markdown,
       source: "MCP: tools/list",
     });
@@ -668,9 +668,9 @@ describe("Fixture-Based Tests (Real MCP Output)", () => {
 });
 
 describe("Query Sanitization", () => {
-  test("handles special FTS5 characters in query", () => {
+  test("handles special FTS5 characters in query", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# Test\n\nSome content here.",
       source: "sanitize",
     });
@@ -686,9 +686,9 @@ describe("Query Sanitization", () => {
     store.close();
   });
 
-  test("empty query returns empty results", () => {
+  test("empty query returns empty results", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# Doc\n\nContent.",
       source: "empty-q",
     });
@@ -699,9 +699,9 @@ describe("Query Sanitization", () => {
 });
 
 describe("Edge Cases", () => {
-  test("content with no headings creates single chunk", () => {
+  test("content with no headings creates single chunk", async () => {
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       content: "Just plain text without any markdown headings.",
       source: "plain",
     });
@@ -709,11 +709,11 @@ describe("Edge Cases", () => {
     store.close();
   });
 
-  test("nested code blocks (triple backtick inside fenced)", () => {
+  test("nested code blocks (triple backtick inside fenced)", async () => {
     const store = createStore();
     const content =
       '# Example\n\n````markdown\n```javascript\nconsole.log("nested");\n```\n````';
-    const result = store.index({ content, source: "nested" });
+    const result = await store.index({ content, source: "nested" });
     assert.ok(result.totalChunks >= 1);
     assert.ok(result.codeChunks >= 1);
 
@@ -723,13 +723,13 @@ describe("Edge Cases", () => {
     store.close();
   });
 
-  test("very long content chunks correctly", () => {
+  test("very long content chunks correctly", async () => {
     const store = createStore();
     const sections = Array.from(
       { length: 20 },
       (_, i) => `## Section ${i}\n\nContent for section ${i}.\n`,
     ).join("\n");
-    const result = store.index({
+    const result = await store.index({
       content: sections,
       source: "long-doc",
     });
@@ -741,9 +741,9 @@ describe("Edge Cases", () => {
     store.close();
   });
 
-  test("heading-only content (no body) still creates chunk", () => {
+  test("heading-only content (no body) still creates chunk", async () => {
     const store = createStore();
-    const result = store.index({
+    const result = await store.index({
       content: "# Title Only\n\n## Another Heading",
       source: "headings-only",
     });
@@ -754,13 +754,13 @@ describe("Edge Cases", () => {
 });
 
 describe("Source-Scoped Search", () => {
-  test("search with source filter returns only matching source", () => {
+  test("search with source filter returns only matching source", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# Zod Transform\n\nUse .transform() to map values.\n\n## Refine\n\nUse .refine() for custom validation.",
       source: "Zod API docs",
     });
-    store.index({
+    await store.index({
       content: "# Security Release\n\nCVE-2025-1234: Fixed transform injection vulnerability.\n\n## Fixes\n\nRefine permission checks.",
       source: "Node.js v22 CHANGELOG",
     });
@@ -788,9 +788,9 @@ describe("Source-Scoped Search", () => {
     store.close();
   });
 
-  test("search with non-matching source returns empty", () => {
+  test("search with non-matching source returns empty", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# React Hooks\n\nuseEffect for side effects.",
       source: "React docs",
     });
@@ -799,11 +799,11 @@ describe("Source-Scoped Search", () => {
     store.close();
   });
 
-  test("listSources returns all indexed sources", () => {
+  test("listSources returns all indexed sources", async () => {
     const store = createStore();
-    store.index({ content: "# A\n\nContent A.", source: "Source A" });
-    store.index({ content: "# B\n\nContent B.", source: "Source B" });
-    store.index({ content: "# C\n\nContent C.", source: "Source C" });
+    await store.index({ content: "# A\n\nContent A.", source: "Source A" });
+    await store.index({ content: "# B\n\nContent B.", source: "Source B" });
+    await store.index({ content: "# C\n\nContent C.", source: "Source C" });
 
     const sources = store.listSources();
     assert.equal(sources.length, 3, `Expected 3 sources, got ${sources.length}`);
@@ -815,10 +815,10 @@ describe("Source-Scoped Search", () => {
     store.close();
   });
 
-  test("source filter uses partial match (LIKE)", () => {
+  test("source filter uses partial match (LIKE)", async () => {
     const store = createStore();
-    store.index({ content: "# Config\n\nDatabase config.", source: "Node.js v22 CHANGELOG" });
-    store.index({ content: "# Config\n\nApp config.", source: "Zod API docs" });
+    await store.index({ content: "# Config\n\nDatabase config.", source: "Node.js v22 CHANGELOG" });
+    await store.index({ content: "# Config\n\nApp config.", source: "Zod API docs" });
 
     // Partial match "v22" should match "Node.js v22 CHANGELOG"
     const results = store.search("config", 5, "v22");
@@ -835,12 +835,12 @@ describe("Source-Scoped Search", () => {
   // that naturally contain these (URL-encoded paths, versioned API endpoints,
   // underscored filenames) silently turned into wildcards and pulled in chunks
   // from unrelated sources. Fix escapes `_`, `%`, and `\` with ESCAPE '\'.
-  test("source filter does not leak via `_` wildcard in source label (#646)", () => {
+  test("source filter does not leak via `_` wildcard in source label (#646)", async () => {
     const store = createStore();
-    store.index({ content: "# A\n\nfoo bar baz qux content matter", source: "api_v1" });
-    store.index({ content: "# B\n\nfoo bar baz qux different content matter", source: "apiXv1" });
-    store.index({ content: "# C\n\nfoo bar baz qux another content matter", source: "api-v1" });
-    store.index({ content: "# D\n\nfoo bar baz qux unrelated matter", source: "completely-other" });
+    await store.index({ content: "# A\n\nfoo bar baz qux content matter", source: "api_v1" });
+    await store.index({ content: "# B\n\nfoo bar baz qux different content matter", source: "apiXv1" });
+    await store.index({ content: "# C\n\nfoo bar baz qux another content matter", source: "api-v1" });
+    await store.index({ content: "# D\n\nfoo bar baz qux unrelated matter", source: "completely-other" });
 
     // BM25 (porter) path
     const porter = store.search("foo bar baz qux matter", 10, "api_v1");
@@ -858,7 +858,7 @@ describe("Source-Scoped Search", () => {
     );
 
     // Fallback (RRF + fuzzy) path
-    const fallback = store.searchWithFallback("foo bar baz qux matter", 10, "api_v1");
+    const fallback = await store.searchWithFallback("foo bar baz qux matter", 10, "api_v1");
     assert.ok(
       fallback.every((r) => r.source === "api_v1"),
       `Fallback path must also escape underscore. Got: ${fallback.map((r) => r.source).join(", ")}`,
@@ -867,11 +867,11 @@ describe("Source-Scoped Search", () => {
     store.close();
   });
 
-  test("source filter does not leak via `%` wildcard in source label (#646)", () => {
+  test("source filter does not leak via `%` wildcard in source label (#646)", async () => {
     const store = createStore();
-    store.index({ content: "# E\n\nhello world content matter", source: "100%off" });
-    store.index({ content: "# F\n\nhello world stuff matter", source: "100ANYTHINGoff" });
-    store.index({ content: "# G\n\nhello world other matter", source: "unrelated-source" });
+    await store.index({ content: "# E\n\nhello world content matter", source: "100%off" });
+    await store.index({ content: "# F\n\nhello world stuff matter", source: "100ANYTHINGoff" });
+    await store.index({ content: "# G\n\nhello world other matter", source: "unrelated-source" });
 
     const results = store.search("hello world matter", 10, "100%off");
     assert.ok(results.length > 0, "Should match literal `100%off`");
@@ -882,12 +882,12 @@ describe("Source-Scoped Search", () => {
     store.close();
   });
 
-  test("source filter still treats partial substring as substring after escaping (#646)", () => {
+  test("source filter still treats partial substring as substring after escaping (#646)", async () => {
     // Confirms the escape fix did not regress legitimate substring matching
     // for sources without LIKE metacharacters.
     const store = createStore();
-    store.index({ content: "# H\n\nConfig database.", source: "Node.js v22 CHANGELOG" });
-    store.index({ content: "# I\n\nApp config.", source: "Zod API docs" });
+    await store.index({ content: "# H\n\nConfig database.", source: "Node.js v22 CHANGELOG" });
+    await store.index({ content: "# I\n\nApp config.", source: "Zod API docs" });
 
     const results = store.search("config", 5, "v22");
     assert.ok(results.length > 0, "Plain partial match must still work after escape fix");
@@ -898,11 +898,11 @@ describe("Source-Scoped Search", () => {
     store.close();
   });
 
-  test("source filter handles backslash literal in source label (#646)", () => {
+  test("source filter handles backslash literal in source label (#646)", async () => {
     // Backslash is the ESCAPE character — must itself be escaped to remain literal.
     const store = createStore();
-    store.index({ content: "# J\n\nbackslash content matter", source: "path\\to\\thing" });
-    store.index({ content: "# K\n\nbackslash other matter", source: "pathXtoXthing" });
+    await store.index({ content: "# J\n\nbackslash content matter", source: "path\\to\\thing" });
+    await store.index({ content: "# K\n\nbackslash other matter", source: "pathXtoXthing" });
 
     const results = store.search("backslash matter", 10, "path\\to\\thing");
     assert.ok(results.length > 0, "Should match the literal backslash source");
@@ -915,7 +915,7 @@ describe("Source-Scoped Search", () => {
 });
 
 describe("Context Savings Measurement", () => {
-  test("index+search uses less context than raw content", () => {
+  test("index+search uses less context than raw content", async () => {
     const store = createStore();
     const content = readFileSync(
       join(fixtureDir, "context7-react-docs.md"),
@@ -923,7 +923,7 @@ describe("Context Savings Measurement", () => {
     );
     const rawBytes = Buffer.byteLength(content);
 
-    store.index({ content, source: "React docs" });
+    await store.index({ content, source: "React docs" });
 
     // Search returns only relevant chunk, not full doc
     const results = store.search("useEffect cleanup", 1);
@@ -941,44 +941,44 @@ describe("Context Savings Measurement", () => {
 });
 
 describe("Plain Text Indexing", () => {
-  test("indexPlainText: chunks by line groups", () => {
+  test("indexPlainText: chunks by line groups", async () => {
     const store = createStore();
     const lines = Array.from({ length: 100 }, (_, i) => `Log line ${i + 1}: processing request`).join("\n");
-    const result = store.indexPlainText(lines, "build-output");
+    const result = await store.indexPlainText(lines, "build-output");
     assert.ok(result.totalChunks >= 5, `Expected >=5 chunks for 100 lines with 20-line groups, got ${result.totalChunks}`);
     assert.equal(result.label, "build-output");
     assert.equal(result.codeChunks, 0);
     store.close();
   });
 
-  test("indexPlainText: single chunk for small output", () => {
+  test("indexPlainText: single chunk for small output", async () => {
     const store = createStore();
     const content = "Line 1\nLine 2\nLine 3";
-    const result = store.indexPlainText(content, "small-output");
+    const result = await store.indexPlainText(content, "small-output");
     assert.equal(result.totalChunks, 1, `Expected 1 chunk for 3 lines, got ${result.totalChunks}`);
     assert.equal(result.label, "small-output");
     store.close();
   });
 
-  test("indexPlainText: blank-line splitting for sectioned output", () => {
+  test("indexPlainText: blank-line splitting for sectioned output", async () => {
     const store = createStore();
     const content = [
       "Section A line 1\nSection A line 2",
       "Section B line 1\nSection B line 2",
       "Section C line 1\nSection C line 2",
     ].join("\n\n");
-    const result = store.indexPlainText(content, "sectioned-output");
+    const result = await store.indexPlainText(content, "sectioned-output");
     assert.equal(result.totalChunks, 3, `Expected 3 chunks for 3 blank-line-separated sections, got ${result.totalChunks}`);
     store.close();
   });
 
-  test("indexPlainText: searchable after indexing", () => {
+  test("indexPlainText: searchable after indexing", async () => {
     const store = createStore();
     const lines = Array.from({ length: 200 }, (_, i) => {
       if (i === 149) return "ERROR: connection refused to database host";
       return `[INFO] ${i + 1}: normal operation continued`;
     }).join("\n");
-    store.indexPlainText(lines, "server-logs");
+    await store.indexPlainText(lines, "server-logs");
     const results = store.search("connection refused", 3);
     assert.ok(results.length > 0, "Should find the error line via search");
     assert.ok(
@@ -988,18 +988,18 @@ describe("Plain Text Indexing", () => {
     store.close();
   });
 
-  test("indexPlainText: empty content returns 0 chunks", () => {
+  test("indexPlainText: empty content returns 0 chunks", async () => {
     const store = createStore();
-    const result = store.indexPlainText("", "empty-output");
+    const result = await store.indexPlainText("", "empty-output");
     assert.equal(result.totalChunks, 0, "Empty content should produce 0 chunks");
     assert.equal(result.label, "empty-output");
     store.close();
   });
 
-  test("indexPlainText: in-memory store works", () => {
+  test("indexPlainText: in-memory store works", async () => {
     const store = new ContentStore(":memory:");
     const content = "Line 1\nLine 2\nLine 3";
-    const result = store.indexPlainText(content, "memory-test");
+    const result = await store.indexPlainText(content, "memory-test");
     assert.equal(result.totalChunks, 1);
     assert.equal(result.label, "memory-test");
 
@@ -1011,7 +1011,7 @@ describe("Plain Text Indexing", () => {
 });
 
 describe("getDistinctiveTerms", () => {
-  test("getDistinctiveTerms: returns terms in moderate frequency range", () => {
+  test("getDistinctiveTerms: returns terms in moderate frequency range", async () => {
     const store = createStore();
     // Create content with 10 sections. A distinctive term appears in 3-4 sections
     // (i.e., >= 2 and <= 40% of 10 = 4).
@@ -1021,7 +1021,7 @@ describe("getDistinctiveTerms", () => {
       if (i < 5) return `${base}\n\nThe database connection pool handles queries.`;
       return `${base}\n\nPlain filler paragraph without special keywords.`;
     }).join("\n\n");
-    const result = store.indexPlainText(sections, "distinctive-moderate");
+    const result = await store.indexPlainText(sections, "distinctive-moderate");
     const terms = store.getDistinctiveTerms(result.sourceId);
     assert.ok(Array.isArray(terms), "Should return an array");
     assert.ok(terms.length > 0, `Should return some distinctive terms, got ${terms.length}`);
@@ -1033,18 +1033,18 @@ describe("getDistinctiveTerms", () => {
     store.close();
   });
 
-  test("getDistinctiveTerms: returns empty for too few sections", () => {
+  test("getDistinctiveTerms: returns empty for too few sections", async () => {
     const store = createStore();
     // Only 2 sections — below the chunk_count < 3 threshold
     const content = "Section A content here.\n\nSection B content here.";
-    const result = store.indexPlainText(content, "too-few-sections");
+    const result = await store.indexPlainText(content, "too-few-sections");
     assert.ok(result.totalChunks <= 2, `Expected <=2 chunks, got ${result.totalChunks}`);
     const terms = store.getDistinctiveTerms(result.sourceId);
     assert.deepEqual(terms, [], "Should return empty array for fewer than 3 chunks");
     store.close();
   });
 
-  test("getDistinctiveTerms: excludes stopwords", () => {
+  test("getDistinctiveTerms: excludes stopwords", async () => {
     const store = createStore();
     // Create 5 sections where stopwords "the", "this", "that", "with" appear in every section.
     // "encryption" appears in 2 sections (moderate frequency).
@@ -1053,7 +1053,7 @@ describe("getDistinctiveTerms", () => {
       if (i < 2) return `${base}\n\nEncryption algorithms protect the data.`;
       return base;
     }).join("\n\n");
-    const result = store.indexPlainText(sections, "stopwords-test");
+    const result = await store.indexPlainText(sections, "stopwords-test");
     const terms = store.getDistinctiveTerms(result.sourceId);
     // Stopwords should never appear
     const stopwords = ["the", "this", "that", "with", "for", "and"];
@@ -1073,7 +1073,7 @@ describe("getDistinctiveTerms", () => {
 });
 
 describe("Smart Chunk Titles", () => {
-  test("smart chunk titles: blank-line split uses first line as title", () => {
+  test("smart chunk titles: blank-line split uses first line as title", async () => {
     const store = createStore();
     // 4 blank-line-separated sections with meaningful first lines
     const content = [
@@ -1082,7 +1082,7 @@ describe("Smart Chunk Titles", () => {
       "v2.2.0 - New features\nAdded WebSocket support\nNew configuration API",
       "v2.1.0 - Bug fixes\nFixed race condition in worker threads\nImproved error messages",
     ].join("\n\n");
-    store.indexPlainText(content, "changelog-sections");
+    await store.indexPlainText(content, "changelog-sections");
 
     // Search for a term in the first section
     const results = store.search("memory leak connection pool", 1);
@@ -1107,7 +1107,7 @@ describe("Smart Chunk Titles", () => {
     store.close();
   });
 
-  test("smart chunk titles: line-group chunks use first line as title", () => {
+  test("smart chunk titles: line-group chunks use first line as title", async () => {
     const store = createStore();
     // Create enough lines (>20) to trigger line-group chunking (not blank-line splitting)
     // by making it a single block of lines with no blank-line sections
@@ -1118,7 +1118,7 @@ describe("Smart Chunk Titles", () => {
       return `[LOG] Step ${i}: processing task ${i}`;
     });
     const content = lines.join("\n");
-    store.indexPlainText(content, "build-log");
+    await store.indexPlainText(content, "build-log");
 
     // Search for content in the first chunk
     const results = store.search("Failed compile auth-service", 1);
@@ -1162,15 +1162,15 @@ describe("DB Cleanup", () => {
     try { require("fs").unlinkSync(myPath); } catch {}
   });
 
-  test("store.cleanup() removes own DB and WAL/SHM files", () => {
+  test("store.cleanup() removes own DB and WAL/SHM files", async () => {
     const store = createStore();
     // Index something to generate WAL activity
-    store.index({ content: "# Test\n\nCleanup test content.", source: "cleanup-test" });
+    await store.index({ content: "# Test\n\nCleanup test content.", source: "cleanup-test" });
 
     // Get the DB path by creating a known-path store
     const knownPath = join(tmpdir(), `context-mode-cleanup-test-${Date.now()}.db`);
     const knownStore = new ContentStore(knownPath);
-    knownStore.index({ content: "# Data\n\nSome data.", source: "known" });
+    await knownStore.index({ content: "# Data\n\nSome data.", source: "known" });
 
     assert.ok(existsSync(knownPath), "DB should exist before cleanup");
 
@@ -1192,14 +1192,14 @@ describe("DB Cleanup", () => {
 });
 
 describe("Max Chunk Size", () => {
-  test("splits oversized markdown chunk at paragraph boundaries", () => {
+  test("splits oversized markdown chunk at paragraph boundaries", async () => {
     const store = createStore();
     const paragraphs = Array.from({ length: 20 }, (_, i) =>
       `Paragraph ${i + 1}. ${"Lorem ipsum dolor sit amet. ".repeat(20)}`
     );
     const content = `# Big Section\n\n${paragraphs.join("\n\n")}`;
 
-    const result = store.index({ content, source: "max-chunk-test" });
+    const result = await store.index({ content, source: "max-chunk-test" });
     assert.ok(result.totalChunks > 1, `Expected >1 chunk, got ${result.totalChunks}`);
 
     const searchResult = store.search("Paragraph", 10, "max-chunk-test");
@@ -1209,15 +1209,15 @@ describe("Max Chunk Size", () => {
     store.close();
   });
 
-  test("does not split chunks already under maxChunkBytes", () => {
+  test("does not split chunks already under maxChunkBytes", async () => {
     const store = createStore();
     const content = `# Small Section\n\nJust a few lines of text.\n\nAnother paragraph.`;
-    const result = store.index({ content, source: "small-chunk-test" });
+    const result = await store.index({ content, source: "small-chunk-test" });
     assert.equal(result.totalChunks, 1);
     store.close();
   });
 
-  test("keeps code blocks intact when splitting oversized chunks", () => {
+  test("keeps code blocks intact when splitting oversized chunks", async () => {
     const store = createStore();
     const codeBlock = "```typescript\n" + "const x = 1;\n".repeat(100) + "```";
     const prose = Array.from({ length: 10 }, (_, i) =>
@@ -1225,7 +1225,7 @@ describe("Max Chunk Size", () => {
     ).join("\n\n");
     const content = `# Code Section\n\n${codeBlock}\n\n${prose}`;
 
-    const result = store.index({ content, source: "code-chunk-test" });
+    const result = await store.index({ content, source: "code-chunk-test" });
     assert.ok(result.totalChunks >= 2, `Expected >=2 chunks, got ${result.totalChunks}`);
 
     const codeResults = store.search("const x", 5, "code-chunk-test");
@@ -1239,7 +1239,7 @@ describe("Max Chunk Size", () => {
 });
 
 describe("JSON Chunking (Objects)", () => {
-  test("chunks JSON object by top-level keys", () => {
+  test("chunks JSON object by top-level keys", async () => {
     const store = createStore();
     const json = JSON.stringify({
       authentication: {
@@ -1252,7 +1252,7 @@ describe("JSON Chunking (Objects)", () => {
       },
     });
 
-    const result = store.indexJSON(json, "config");
+    const result = await store.indexJSON(json, "config");
     assert.ok(result.totalChunks >= 2, `Expected >=2 chunks, got ${result.totalChunks}`);
 
     const authResults = store.search("oauth clientId", 5, "config");
@@ -1264,15 +1264,15 @@ describe("JSON Chunking (Objects)", () => {
     store.close();
   });
 
-  test("small JSON object becomes single chunk", () => {
+  test("small JSON object becomes single chunk", async () => {
     const store = createStore();
     const json = JSON.stringify({ name: "Alice", role: "admin" });
-    const result = store.indexJSON(json, "small");
+    const result = await store.indexJSON(json, "small");
     assert.equal(result.totalChunks, 1);
     store.close();
   });
 
-  test("chunks nested JSON with path titles", () => {
+  test("chunks nested JSON with path titles", async () => {
     const store = createStore();
     const endpoints: Record<string, unknown> = {};
     for (let i = 0; i < 30; i++) {
@@ -1284,7 +1284,7 @@ describe("JSON Chunking (Objects)", () => {
     }
     const json = JSON.stringify({ endpoints });
 
-    const result = store.indexJSON(json, "api-spec");
+    const result = await store.indexJSON(json, "api-spec");
     assert.ok(result.totalChunks > 1, `Expected >1 chunk, got ${result.totalChunks}`);
 
     const results = store.search("resource15", 5, "api-spec");
@@ -1292,16 +1292,16 @@ describe("JSON Chunking (Objects)", () => {
     store.close();
   });
 
-  test("handles invalid JSON gracefully by falling back to plain text", () => {
+  test("handles invalid JSON gracefully by falling back to plain text", async () => {
     const store = createStore();
-    const result = store.indexJSON("not valid json {{{", "bad-json");
+    const result = await store.indexJSON("not valid json {{{", "bad-json");
     assert.ok(result.totalChunks >= 1, "Should still index as plain text");
     store.close();
   });
 });
 
 describe("JSON Chunking (Arrays)", () => {
-  test("top-level array of objects uses identity field in titles", () => {
+  test("top-level array of objects uses identity field in titles", async () => {
     const store = createStore();
     const users = Array.from({ length: 50 }, (_, i) => ({
       id: i + 1,
@@ -1311,7 +1311,7 @@ describe("JSON Chunking (Arrays)", () => {
     }));
     const json = JSON.stringify(users);
 
-    const result = store.indexJSON(json, "users-api");
+    const result = await store.indexJSON(json, "users-api");
     assert.ok(result.totalChunks > 1, `Expected >1 chunk, got ${result.totalChunks}`);
 
     const results = store.search("User 25", 5, "users-api");
@@ -1319,7 +1319,7 @@ describe("JSON Chunking (Arrays)", () => {
     store.close();
   });
 
-  test("identity field appears in chunk titles", () => {
+  test("identity field appears in chunk titles", async () => {
     const store = createStore();
     const items = [
       { name: "Alice", role: "admin", data: "x".repeat(2000) },
@@ -1328,7 +1328,7 @@ describe("JSON Chunking (Arrays)", () => {
     ];
     const json = JSON.stringify(items);
 
-    const result = store.indexJSON(json, "people");
+    const result = await store.indexJSON(json, "people");
     assert.ok(result.totalChunks >= 2, `Expected >=2 chunks, got ${result.totalChunks}`);
 
     const results = store.search("Alice admin", 5, "people");
@@ -1340,19 +1340,19 @@ describe("JSON Chunking (Arrays)", () => {
     store.close();
   });
 
-  test("array of primitives becomes batched chunks", () => {
+  test("array of primitives becomes batched chunks", async () => {
     const store = createStore();
     const longStrings = Array.from({ length: 100 }, (_, i) =>
       `Item ${i}: ${"content ".repeat(50)}`
     );
     const json = JSON.stringify(longStrings);
 
-    const result = store.indexJSON(json, "primitives");
+    const result = await store.indexJSON(json, "primitives");
     assert.ok(result.totalChunks >= 2, `Expected >=2 chunks, got ${result.totalChunks}`);
     store.close();
   });
 
-  test("nested array within object uses full key path", () => {
+  test("nested array within object uses full key path", async () => {
     const store = createStore();
     const json = JSON.stringify({
       api: {
@@ -1364,7 +1364,7 @@ describe("JSON Chunking (Arrays)", () => {
       },
     });
 
-    const result = store.indexJSON(json, "nested-api");
+    const result = await store.indexJSON(json, "nested-api");
     assert.ok(result.totalChunks > 1, `Expected >1 chunk, got ${result.totalChunks}`);
 
     const results = store.search("resource10", 5, "nested-api");
@@ -1378,7 +1378,7 @@ describe("JSON Chunking (Arrays)", () => {
 });
 
 describe("Content-Type Routing", () => {
-  test("indexJSON produces searchable chunks from pretty-printed JSON", () => {
+  test("indexJSON produces searchable chunks from pretty-printed JSON", async () => {
     const store = createStore();
     const apiResponse = JSON.stringify({
       data: {
@@ -1390,7 +1390,7 @@ describe("Content-Type Routing", () => {
       },
     });
 
-    const result = store.indexJSON(apiResponse, "api-response");
+    const result = await store.indexJSON(apiResponse, "api-response");
     assert.ok(result.totalChunks >= 1, `Expected >=1 chunks, got ${result.totalChunks}`);
 
     const results = store.search("Alice email", 5, "api-response");
@@ -1398,10 +1398,10 @@ describe("Content-Type Routing", () => {
     store.close();
   });
 
-  test("indexPlainText handles non-JSON non-HTML content", () => {
+  test("indexPlainText handles non-JSON non-HTML content", async () => {
     const store = createStore();
     const plainText = "name,email,role\nAlice,alice@example.com,admin\nBob,bob@example.com,user";
-    const result = store.indexPlainText(plainText, "csv-response");
+    const result = await store.indexPlainText(plainText, "csv-response");
     assert.ok(result.totalChunks >= 1);
     store.close();
   });
@@ -1417,9 +1417,9 @@ describe("Source metadata (TTL cache)", () => {
     store.close();
   });
 
-  test("getSourceMeta returns metadata after indexing", () => {
+  test("getSourceMeta returns metadata after indexing", async () => {
     const store = createStore();
-    store.index({ content: "# Hello\nWorld", source: "test-doc" });
+    await store.index({ content: "# Hello\nWorld", source: "test-doc" });
     const meta = store.getSourceMeta("test-doc");
     expect(meta).not.toBeNull();
     expect(meta!.label).toBe("test-doc");
@@ -1428,20 +1428,20 @@ describe("Source metadata (TTL cache)", () => {
     store.close();
   });
 
-  test("getSourceMeta indexedAt is valid datetime", () => {
+  test("getSourceMeta indexedAt is valid datetime", async () => {
     const store = createStore();
-    store.index({ content: "# Test\nContent here", source: "datetime-test" });
+    await store.index({ content: "# Test\nContent here", source: "datetime-test" });
     const meta = store.getSourceMeta("datetime-test");
     const parsed = new Date(meta!.indexedAt);
     expect(parsed.getTime()).not.toBeNaN();
     store.close();
   });
 
-  test("getSourceMeta updates after re-indexing same source", () => {
+  test("getSourceMeta updates after re-indexing same source", async () => {
     const store = createStore();
-    store.index({ content: "# V1\nFirst version", source: "evolving-doc" });
+    await store.index({ content: "# V1\nFirst version", source: "evolving-doc" });
     const meta1 = store.getSourceMeta("evolving-doc");
-    store.index({ content: "# V2\nSecond version\n## Extra\nMore content", source: "evolving-doc" });
+    await store.index({ content: "# V2\nSecond version\n## Extra\nMore content", source: "evolving-doc" });
     const meta2 = store.getSourceMeta("evolving-doc");
     expect(meta2!.chunkCount).toBeGreaterThanOrEqual(meta1!.chunkCount);
     store.close();
@@ -1451,9 +1451,9 @@ describe("Source metadata (TTL cache)", () => {
 // ── Persistent content store lifecycle ────────────────────────────────
 
 describe("Persistent content store lifecycle", () => {
-  test("cleanupStaleSources keeps recent sources and returns 0", () => {
+  test("cleanupStaleSources keeps recent sources and returns 0", async () => {
     const store = createStore();
-    store.index({ content: "# Fresh doc\nContent", source: "fresh-source" });
+    await store.index({ content: "# Fresh doc\nContent", source: "fresh-source" });
     const deleted = store.cleanupStaleSources(30);
     expect(typeof deleted).toBe("number");
     expect(deleted).toBe(0);
@@ -1463,26 +1463,26 @@ describe("Persistent content store lifecycle", () => {
     store.close();
   });
 
-  test("cleanupStaleSources returns number type", () => {
+  test("cleanupStaleSources returns number type", async () => {
     const store = createStore();
-    store.index({ content: "# Test\nContent", source: "test-source" });
+    await store.index({ content: "# Test\nContent", source: "test-source" });
     const deleted = store.cleanupStaleSources(365);
     expect(typeof deleted).toBe("number");
     store.close();
   });
 
-  test("getDBSizeBytes returns positive number after indexing", () => {
+  test("getDBSizeBytes returns positive number after indexing", async () => {
     const store = createStore();
-    store.index({ content: "# Test\nSome content for size", source: "size-test" });
+    await store.index({ content: "# Test\nSome content for size", source: "size-test" });
     const size = store.getDBSizeBytes();
     expect(size).toBeGreaterThan(0);
     store.close();
   });
 
-  test("store data persists after close and reopen at same path", () => {
+  test("store data persists after close and reopen at same path", async () => {
     const dbPath = join(tmpdir(), `persist-test-${Date.now()}.db`);
     const store1 = new ContentStore(dbPath);
-    store1.index({ content: "# Persistent\nThis should survive", source: "persist-doc" });
+    await store1.index({ content: "# Persistent\nThis should survive", source: "persist-doc" });
     store1.close();
 
     const store2 = new ContentStore(dbPath);
@@ -1493,10 +1493,10 @@ describe("Persistent content store lifecycle", () => {
     store2.cleanup();
   });
 
-  test("deleting DB file before creating store gives fresh state", () => {
+  test("deleting DB file before creating store gives fresh state", async () => {
     const dbPath = join(tmpdir(), `fresh-test-${Date.now()}.db`);
     const store1 = new ContentStore(dbPath);
-    store1.index({ content: "# Old\nOld content", source: "old-doc" });
+    await store1.index({ content: "# Old\nOld content", source: "old-doc" });
     store1.close();
 
     for (const suffix of ["", "-wal", "-shm"]) {
@@ -1628,13 +1628,13 @@ describe("withRetry edge cases", () => {
 // ── Concurrent write resilience ──
 
 describe("concurrent DB access", () => {
-  test("two ContentStore instances can write to the same DB file", () => {
+  test("two ContentStore instances can write to the same DB file", async () => {
     const dbPath = join(tmpdir(), `concurrent-write-${Date.now()}.db`);
     const store1 = new ContentStore(dbPath);
     const store2 = new ContentStore(dbPath);
 
-    store1.index({ content: "# First\n\nContent from store 1.", source: "store1-doc" });
-    store2.index({ content: "# Second\n\nContent from store 2.", source: "store2-doc" });
+    await store1.index({ content: "# First\n\nContent from store 1.", source: "store1-doc" });
+    await store2.index({ content: "# Second\n\nContent from store 2.", source: "store2-doc" });
 
     // Both sources should be searchable from either store
     const results1 = store1.search("Content from store", 10);
@@ -1647,15 +1647,15 @@ describe("concurrent DB access", () => {
     store2.close();
   });
 
-  test("indexPlainText is protected by withRetry", () => {
+  test("indexPlainText is protected by withRetry", async () => {
     // Verify indexPlainText doesn't throw on transient BUSY by testing
     // concurrent plain text indexing on same DB
     const dbPath = join(tmpdir(), `concurrent-plaintext-${Date.now()}.db`);
     const store1 = new ContentStore(dbPath);
     const store2 = new ContentStore(dbPath);
 
-    store1.indexPlainText("alpha bravo charlie", "plain-1");
-    store2.indexPlainText("delta echo foxtrot", "plain-2");
+    await store1.indexPlainText("alpha bravo charlie", "plain-1");
+    await store2.indexPlainText("delta echo foxtrot", "plain-2");
 
     const r1 = store1.search("alpha bravo", 5, "plain-1");
     expect(r1.length).toBeGreaterThan(0);
@@ -1666,13 +1666,13 @@ describe("concurrent DB access", () => {
     store2.close();
   });
 
-  test("indexJSON is protected by withRetry", () => {
+  test("indexJSON is protected by withRetry", async () => {
     const dbPath = join(tmpdir(), `concurrent-json-${Date.now()}.db`);
     const store1 = new ContentStore(dbPath);
     const store2 = new ContentStore(dbPath);
 
-    store1.indexJSON(JSON.stringify({ users: [{ name: "Alice" }] }), "json-1");
-    store2.indexJSON(JSON.stringify({ items: [{ id: 1 }] }), "json-2");
+    await store1.indexJSON(JSON.stringify({ users: [{ name: "Alice" }] }), "json-1");
+    await store2.indexJSON(JSON.stringify({ items: [{ id: 1 }] }), "json-2");
 
     const results = store1.search("Alice", 5);
     expect(results.length).toBeGreaterThan(0);
@@ -1681,15 +1681,15 @@ describe("concurrent DB access", () => {
     store2.close();
   });
 
-  test("search and searchTrigram work under concurrent writes", () => {
+  test("search and searchTrigram work under concurrent writes", async () => {
     const dbPath = join(tmpdir(), `concurrent-search-${Date.now()}.db`);
     const store1 = new ContentStore(dbPath);
     const store2 = new ContentStore(dbPath);
 
-    store1.index({ content: "# Guide\n\nReact hooks are powerful.", source: "guide" });
+    await store1.index({ content: "# Guide\n\nReact hooks are powerful.", source: "guide" });
 
     // Write from store2 while store1 searches
-    store2.index({ content: "# Tutorial\n\nVue composition API.", source: "tutorial" });
+    await store2.index({ content: "# Tutorial\n\nVue composition API.", source: "tutorial" });
     const results = store1.search("hooks", 5);
     expect(results.length).toBeGreaterThan(0);
 
@@ -1733,7 +1733,7 @@ describe("closeDB — WAL checkpoint", () => {
 
 describe("ContentStore — corrupt DB recovery", () => {
   // Windows file locking prevents WAL/SHM deletion while another worker holds them open
-  test.skipIf(process.platform === "win32")("recovers from corrupt DB file by deleting and recreating", () => {
+  test.skipIf(process.platform === "win32")("recovers from corrupt DB file by deleting and recreating", async () => {
     const dbPath = join(tmpdir(), `corrupt-store-${Date.now()}.db`);
     // Write garbage to simulate corrupt DB
     writeFileSync(dbPath, "THIS IS NOT A SQLITE DATABASE FILE");
@@ -1742,7 +1742,7 @@ describe("ContentStore — corrupt DB recovery", () => {
     // Should recover: delete corrupt files and create fresh DB
     const store = new ContentStore(dbPath);
     // Store should be functional
-    store.index({ content: "test content", source: "test" });
+    await store.index({ content: "test content", source: "test" });
     const results = store.search("test content");
     expect(results.length).toBeGreaterThan(0);
 
@@ -1760,10 +1760,10 @@ describe("ContentStore — corrupt DB recovery", () => {
 // ═══════════════════════════════════════════════════════════
 
 describe("mmap_size pragma", () => {
-  test("mmap_size is set on new ContentStore", () => {
+  test("mmap_size is set on new ContentStore", async () => {
     const dbPath = join(tmpdir(), `ctx-mmap-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
     const store = new ContentStore(dbPath);
-    store.indexPlainText("Memory-mapped I/O test content for FTS5 search", "mmap-test");
+    await store.indexPlainText("Memory-mapped I/O test content for FTS5 search", "mmap-test");
     const results = store.search("memory-mapped");
     expect(results.length).toBeGreaterThan(0);
     store.cleanup();
@@ -1775,12 +1775,12 @@ describe("mmap_size pragma", () => {
 // ═══════════════════════════════════════════════════════════
 
 describe("FTS5 periodic optimize", () => {
-  test("search works correctly after OPTIMIZE_EVERY inserts", () => {
+  test("search works correctly after OPTIMIZE_EVERY inserts", async () => {
     const dbPath = join(tmpdir(), `ctx-optimize-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
     const store = new ContentStore(dbPath);
 
     for (let i = 0; i < ContentStore.OPTIMIZE_EVERY + 5; i++) {
-      store.indexPlainText(`Document number ${i} about testing optimization`, `source-${i}`);
+      await store.indexPlainText(`Document number ${i} about testing optimization`, `source-${i}`);
     }
 
     const results = store.search("testing optimization");
@@ -1790,12 +1790,12 @@ describe("FTS5 periodic optimize", () => {
     store.cleanup();
   });
 
-  test("close() does not throw even after many inserts", () => {
+  test("close() does not throw even after many inserts", async () => {
     const dbPath = join(tmpdir(), `ctx-optimize-close-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
     const store = new ContentStore(dbPath);
 
     for (let i = 0; i < 10; i++) {
-      store.indexPlainText(`Content ${i}`, `src-${i}`);
+      await store.indexPlainText(`Content ${i}`, `src-${i}`);
     }
 
     expect(() => store.close()).not.toThrow();
@@ -1858,9 +1858,9 @@ describe("Sanitize query token deduplication", () => {
     );
   });
 
-  test("search returns identical results for duplicated and deduplicated queries", () => {
+  test("search returns identical results for duplicated and deduplicated queries", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content:
         "# Error Handling\n\nThe database connection threw an error during migration.\n\n# Overview\n\nPlain content.",
       source: "dedup-behavioral",
@@ -1879,11 +1879,11 @@ describe("Sanitize query token deduplication", () => {
 });
 
 describe("Stopword filtering in search queries", () => {
-  test("stopwords are filtered from search — meaningful terms drive ranking", () => {
+  test("stopwords are filtered from search — meaningful terms drive ranking", async () => {
     const store = createStore();
     // "fix" and "update" are stopwords in the domain list.
     // "database" and "connection" are meaningful terms.
-    store.index({
+    await store.index({
       content:
         "# Database Connection Pool\n\nManage database connections with pooling.\n\n# Update Log\n\nFix applied to update module on Tuesday.",
       source: "stopword-search",
@@ -1900,9 +1900,9 @@ describe("Stopword filtering in search queries", () => {
     store.close();
   });
 
-  test("all-stopword query still returns results (fallback)", () => {
+  test("all-stopword query still returns results (fallback)", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "# Updates\n\nUpdate the test runner to fix the issue.\n\n# Other\n\nUnrelated content.",
       source: "all-stopwords",
     });
@@ -1913,9 +1913,9 @@ describe("Stopword filtering in search queries", () => {
     store.close();
   });
 
-  test("stopwords filtered from trigram search", () => {
+  test("stopwords filtered from trigram search", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content:
         "# Encryption Module\n\nAES encryption with key rotation.\n\n# Testing Guide\n\nRun tests using the test framework.",
       source: "trigram-stopwords",
@@ -1931,17 +1931,17 @@ describe("Stopword filtering in search queries", () => {
     store.close();
   });
 
-  test("proximity reranking ignores stopwords for boost calculation", () => {
+  test("proximity reranking ignores stopwords for boost calculation", async () => {
     const store = createStore();
     // Two chunks: one has "database error" close together, the other has them far apart
     // but has "fix" (stopword) nearby
-    store.index({
+    await store.index({
       content:
         "# Error Handling\n\nThe database threw an error during migration.\n\n# Fix Log\n\nWe fix things. Much later in this document we mention database. Even later we see error.",
       source: "proximity-stopwords",
     });
 
-    const results = store.searchWithFallback("fix database error", 2);
+    const results = await store.searchWithFallback("fix database error", 2);
     assert.ok(results.length > 0, "Should return results");
     // The chunk with "database" and "error" close together should rank higher
     // because "fix" (stopword) is excluded from proximity calculation
@@ -2042,7 +2042,7 @@ describe("nodeSqliteHasFts5 — FTS5 capability probe (#461)", () => {
 });
 
 describe("ctx_index TOCTOU symlink swap (#442 round-3)", () => {
-  test("index() rejects non-regular files (e.g. /dev/null) via fd-bound fstat", () => {
+  test("index() rejects non-regular files (e.g. /dev/null) via fd-bound fstat", async () => {
     // RED proof: prior to the fix, `readFileSync('/dev/null', 'utf-8')`
     // returned "" so the index call silently produced 0 chunks instead
     // of rejecting. After the fix, openSync + fstat + isFile() check
@@ -2053,8 +2053,8 @@ describe("ctx_index TOCTOU symlink swap (#442 round-3)", () => {
     const charDev = "/dev/null";
     const store = createStore();
     try {
-      assert.throws(
-        () => store.index({ path: charDev, source: "chardev" }),
+      await assert.rejects(
+        store.index({ path: charDev, source: "chardev" }),
         /not a regular file/,
         "non-regular files must be rejected by fd-bound fstat",
       );
@@ -2063,7 +2063,7 @@ describe("ctx_index TOCTOU symlink swap (#442 round-3)", () => {
     }
   });
 
-  test("index() rejects non-regular files via fd-bound fstat (directory)", () => {
+  test("index() rejects non-regular files via fd-bound fstat (directory)", async () => {
     // If the path is swapped to a directory between gate and read,
     // fstat on the opened fd reveals it and the read is rejected.
     const dirPath = join(
@@ -2076,8 +2076,8 @@ describe("ctx_index TOCTOU symlink swap (#442 round-3)", () => {
 
     try {
       const store = createStore();
-      assert.throws(
-        () => store.index({ path: dirPath, source: "dir" }),
+      await assert.rejects(
+        store.index({ path: dirPath, source: "dir" }),
         /not a regular file|EISDIR/,
         "directory must not be readable through index()",
       );
@@ -2087,7 +2087,7 @@ describe("ctx_index TOCTOU symlink swap (#442 round-3)", () => {
     }
   });
 
-  test("index() reads file content via fd (regression: normal indexing still works)", () => {
+  test("index() reads file content via fd (regression: normal indexing still works)", async () => {
     // After fd-bound read fix, normal file indexing must still produce
     // the same chunks/content as before. Validates the GREEN path.
     const requireFn = createRequire(import.meta.url);
@@ -2103,7 +2103,7 @@ describe("ctx_index TOCTOU symlink swap (#442 round-3)", () => {
 
     try {
       const store = createStore();
-      const result = store.index({ path: safePath, source: "safe-fd" });
+      const result = await store.index({ path: safePath, source: "safe-fd" });
       assert.ok(result.totalChunks > 0, "fd-bound read indexed content");
       assert.equal(result.label, "safe-fd");
       store.close();

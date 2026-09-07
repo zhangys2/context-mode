@@ -545,7 +545,7 @@ async function indexCommand(argv: string[]): Promise<number> {
       assertReadAllowed(absPath, projectDir);
       if (st.isDirectory()) {
         const denyGlobs = readToolDenyPatterns("Read", projectDir);
-        const result = store.indexDirectory({
+        const result = await store.indexDirectory({
           path: absPath,
           source,
           include: stringListFlag(parsed.flags, "include"),
@@ -568,7 +568,7 @@ async function indexCommand(argv: string[]): Promise<number> {
         const failed = result.failed > 0 ? `; ${result.failed} failed` : "";
         console.log(`Indexed ${result.filesIndexed} files (${result.totalChunks} sections) from ${absPath}${cap}${denied}${failed}`);
       } else {
-        const result = store.index({ path: absPath, source });
+        const result = await store.index({ path: absPath, source });
         console.log(`Indexed ${result.totalChunks} sections (${result.codeChunks} with code) from ${absPath}`);
       }
       console.log(`Source: ${source}`);
@@ -601,7 +601,7 @@ async function searchCommand(argv: string[]): Promise<number> {
       const type = stringFlag(parsed.flags, "type");
       if (type && type !== "code" && type !== "prose") throw new Error("--type must be code or prose");
 
-      const results = store.searchWithFallback(
+      const results = await store.searchWithFallback(
         query,
         limit,
         stringFlag(parsed.flags, "source"),

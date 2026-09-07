@@ -104,13 +104,13 @@ function cleanupSearchDB(path: string): void {
   }
 }
 
-function benchFuzzyCache(): { cold: number; warm: number } {
+async function benchFuzzyCache(): Promise<{ cold: number; warm: number }> {
   const dbPath = join(tmpdir(), `bench-fuzzy-${Date.now()}.db`);
   const store = new ContentStore(dbPath);
   try {
     for (let i = 0; i < SEARCH_N_DOCS; i++) {
       const body = SEARCH_TOPICS.map((w) => `${w}${i % 13}`).join(" ") + ` doc_${i}`;
-      store.indexPlainText(body, `src_${i}`);
+      await store.indexPlainText(body, `src_${i}`);
     }
     const typo = "erorr"; // edit distance 2 from "error"
     const t0 = process.hrtime.bigint();
@@ -403,7 +403,7 @@ print(f"filtered: {len(filtered)}")
     `Setup: ${SEARCH_N_DOCS} seeded documents, ${SEARCH_N_ITERS} iterations per measurement`,
   );
 
-  const fuzzy = benchFuzzyCache();
+  const fuzzy = await benchFuzzyCache();
   console.log("\nfuzzy-correct LRU cache (ContentStore)");
   console.log(`  cold (1st call, levenshtein over vocab) : ${fuzzy.cold.toFixed(1)} µs`);
   console.log(`  warm (cache hit, avg of ${SEARCH_N_ITERS})      : ${fuzzy.warm.toFixed(2)} µs`);

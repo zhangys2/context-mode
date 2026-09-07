@@ -9,13 +9,14 @@
  */
 
 import type { Database as DatabaseInstance } from "better-sqlite3";
-import { loadDatabase, applyWALPragmas, closeDB, cleanOrphanedWALFiles, withRetry, deleteDBFiles, isSQLiteCorruptionError } from "./db-base.js";
+import { loadDatabase, applyWALPragmas, closeDB, cleanOrphanedWALFiles, withRetry, withRetryAsync, deleteDBFiles, isSQLiteCorruptionError } from "./db-base.js";
 import type { PreparedStatement } from "./db-base.js";
 import { readFileSync, readdirSync, unlinkSync, existsSync, statSync, openSync, fstatSync, closeSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { walkDirectoryDetailed, type WalkOptions } from "./store-directory.js";
+import { embed, cosineSimilarity, encodeVector, decodeVector } from "./embed.js";
 
 // ─────────────────────────────────────────────────────────
 // Types
@@ -39,6 +40,17 @@ type SearchRow = {
   highlighted: string;
   /** Attribution session_id (empty string for legacy unattributed chunks). */
   session_id: string;
+};
+
+type VectorRow = {
+  chunk_rowid: number;
+  title: string;
+  content: string;
+  content_type: string;
+  timestamp: string | null;
+  label: string;
+  session_id: string;
+  embedding: Buffer;
 };
 
 import type { IndexResult, SearchResult, StoreStats } from "./types.js";
@@ -369,11 +381,21 @@ export class ContentStore {
   #stmtInsertChunk!: PreparedStatement;
   #stmtInsertChunkTrigram!: PreparedStatement;
   #stmtInsertVocab!: PreparedStatement;
+  #stmtInsertVector!: PreparedStatement;
 
   // Dedup path (delete previous source with same label before re-indexing)
   #stmtDeleteChunksByLabel!: PreparedStatement;
   #stmtDeleteChunksTrigramByLabel!: PreparedStatement;
   #stmtDeleteSourcesByLabel!: PreparedStatement;
+  #stmtDeleteVectorsByLabel!: PreparedStatement;
+
+  // Vector search (Layer 3 — see #searchVector)
+  #stmtVectorAll!: PreparedStatement;
+  #stmtVectorFiltered!: PreparedStatement;
+  #stmtVectorExact!: PreparedStatement;
+  #stmtVectorContentType!: PreparedStatement;
+  #stmtVectorFilteredContentType!: PreparedStatement;
+  #stmtVectorExactContentType!: PreparedStatement;
 
   // Search path (hot)
   #stmtSearchPorter!: PreparedStatement;
@@ -500,6 +522,18 @@ export class ContentStore {
         word TEXT PRIMARY KEY
       );
 
+      -- Vector layer: plain BLOB table, not a loadable-extension index like
+      -- sqlite-vec. Similarity is computed in JS (brute-force cosine) — see
+      -- #searchVector. Deliberate choice: sqlite-vec ships a per-platform
+      -- native extension, which would reintroduce exactly the class of
+      -- fragility loadDatabase() (bun:sqlite/node:sqlite over
+      -- better-sqlite3) was built to avoid. Fine at the scale of a single
+      -- project's knowledge base (thousands, not millions, of chunks).
+      CREATE TABLE IF NOT EXISTS chunk_vectors (
+        chunk_rowid INTEGER PRIMARY KEY,
+        embedding BLOB NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_sources_label ON sources(label);
     `);
 
@@ -568,9 +602,18 @@ export class ContentStore {
     this.#stmtInsertVocab = this.#db.prepare(
       "INSERT OR IGNORE INTO vocabulary (word) VALUES (?)",
     );
+    this.#stmtInsertVector = this.#db.prepare(
+      "INSERT INTO chunk_vectors (chunk_rowid, embedding) VALUES (?, ?)",
+    );
 
     // Dedup path: delete previous source with same label before re-indexing
     // Prevents stale outputs from accumulating in iterative workflows (build-fix-build)
+    // #stmtDeleteVectorsByLabel MUST run before #stmtDeleteChunksByLabel —
+    // it resolves chunk rowids via a live join through `chunks`, which the
+    // next statement deletes.
+    this.#stmtDeleteVectorsByLabel = this.#db.prepare(
+      "DELETE FROM chunk_vectors WHERE chunk_rowid IN (SELECT rowid FROM chunks WHERE source_id IN (SELECT id FROM sources WHERE label = ?))",
+    );
     this.#stmtDeleteChunksByLabel = this.#db.prepare(
       "DELETE FROM chunks WHERE source_id IN (SELECT id FROM sources WHERE label = ?)",
     );
@@ -777,6 +820,105 @@ export class ContentStore {
       LIMIT ?
     `);
 
+    // Vector search (Layer 3) — no SQL-level ranking; #searchVector fetches
+    // a candidate pool and ranks by cosine similarity in JS. Mirrors the
+    // same none/source/contentType/both filter shape as #stmtSearchPorter*.
+    this.#stmtVectorAll = this.#db.prepare(`
+      SELECT
+        chunks.rowid AS chunk_rowid,
+        chunks.title,
+        chunks.content,
+        chunks.content_type,
+        chunks.timestamp,
+        sources.label,
+        chunks.session_id,
+        chunk_vectors.embedding
+      FROM chunk_vectors
+      JOIN chunks ON chunks.rowid = chunk_vectors.chunk_rowid
+      JOIN sources ON sources.id = chunks.source_id
+      LIMIT ?
+    `);
+    this.#stmtVectorFiltered = this.#db.prepare(`
+      SELECT
+        chunks.rowid AS chunk_rowid,
+        chunks.title,
+        chunks.content,
+        chunks.content_type,
+        chunks.timestamp,
+        sources.label,
+        chunks.session_id,
+        chunk_vectors.embedding
+      FROM chunk_vectors
+      JOIN chunks ON chunks.rowid = chunk_vectors.chunk_rowid
+      JOIN sources ON sources.id = chunks.source_id
+      WHERE sources.label LIKE ? ESCAPE '\\'
+      LIMIT ?
+    `);
+    this.#stmtVectorExact = this.#db.prepare(`
+      SELECT
+        chunks.rowid AS chunk_rowid,
+        chunks.title,
+        chunks.content,
+        chunks.content_type,
+        chunks.timestamp,
+        sources.label,
+        chunks.session_id,
+        chunk_vectors.embedding
+      FROM chunk_vectors
+      JOIN chunks ON chunks.rowid = chunk_vectors.chunk_rowid
+      JOIN sources ON sources.id = chunks.source_id
+      WHERE sources.label = ?
+      LIMIT ?
+    `);
+    this.#stmtVectorContentType = this.#db.prepare(`
+      SELECT
+        chunks.rowid AS chunk_rowid,
+        chunks.title,
+        chunks.content,
+        chunks.content_type,
+        chunks.timestamp,
+        sources.label,
+        chunks.session_id,
+        chunk_vectors.embedding
+      FROM chunk_vectors
+      JOIN chunks ON chunks.rowid = chunk_vectors.chunk_rowid
+      JOIN sources ON sources.id = chunks.source_id
+      WHERE chunks.content_type = ?
+      LIMIT ?
+    `);
+    this.#stmtVectorFilteredContentType = this.#db.prepare(`
+      SELECT
+        chunks.rowid AS chunk_rowid,
+        chunks.title,
+        chunks.content,
+        chunks.content_type,
+        chunks.timestamp,
+        sources.label,
+        chunks.session_id,
+        chunk_vectors.embedding
+      FROM chunk_vectors
+      JOIN chunks ON chunks.rowid = chunk_vectors.chunk_rowid
+      JOIN sources ON sources.id = chunks.source_id
+      WHERE sources.label LIKE ? ESCAPE '\\' AND chunks.content_type = ?
+      LIMIT ?
+    `);
+    this.#stmtVectorExactContentType = this.#db.prepare(`
+      SELECT
+        chunks.rowid AS chunk_rowid,
+        chunks.title,
+        chunks.content,
+        chunks.content_type,
+        chunks.timestamp,
+        sources.label,
+        chunks.session_id,
+        chunk_vectors.embedding
+      FROM chunk_vectors
+      JOIN chunks ON chunks.rowid = chunk_vectors.chunk_rowid
+      JOIN sources ON sources.id = chunks.source_id
+      WHERE sources.label = ? AND chunks.content_type = ?
+      LIMIT ?
+    `);
+
     // Fuzzy path
     this.#stmtFuzzyVocab = this.#db.prepare(
       "SELECT word FROM vocabulary WHERE length(word) BETWEEN ? AND ?",
@@ -835,7 +977,7 @@ export class ContentStore {
 
   // ── Index ──
 
-  index(options: {
+  async index(options: {
     content?: string;
     path?: string;
     source?: string;
@@ -845,7 +987,7 @@ export class ContentStore {
      * chunks fall back to empty-string columns (legacy behaviour).
      */
     attribution?: { sessionId?: string; eventId?: string };
-  }): IndexResult {
+  }): Promise<IndexResult> {
     const { content, path, source, attribution } = options;
 
     // Treat empty string as "no content" so an empty `content` paired with a
@@ -889,7 +1031,7 @@ export class ContentStore {
     const filePath = path ?? undefined;
     const contentHash = filePath ? createHash("sha256").update(text).digest("hex") : undefined;
 
-    return withRetry(() => this.#insertChunks(chunks, label, text, filePath, contentHash, attribution));
+    return withRetryAsync(() => this.#insertChunks(chunks, label, text, filePath, contentHash, attribution));
   }
 
   // ── Index Directory (#687) ──
@@ -903,14 +1045,14 @@ export class ContentStore {
    *
    * Reported by @matiasduartee in #687.
    */
-  indexDirectory(opts: {
+  async indexDirectory(opts: {
     path: string;
     source?: string;
     attribution?: { sessionId?: string; eventId?: string };
     /** Optional per-file deny check — runs INSIDE the walk loop so a denied
      *  file does not even open a fd. Returns true to deny. */
     perFileDeny?: (absPath: string) => boolean;
-  } & WalkOptions): {
+  } & WalkOptions): Promise<{
     filesIndexed: number;
     totalChunks: number;
     capped: boolean;
@@ -918,7 +1060,7 @@ export class ContentStore {
     denied: number;
     failed: number;
     label: string;
-  } {
+  }> {
     const { path: rootPath, source, attribution, perFileDeny, ...walkOpts } = opts;
     const walked = walkDirectoryDetailed(rootPath, walkOpts);
 
@@ -935,7 +1077,7 @@ export class ContentStore {
       try {
         // Per-file source label so ctx_search(source: "<file>") still works.
         const fileSource = source ? `${source}:${file}` : file;
-        const r = this.index({ path: file, source: fileSource, attribution });
+        const r = await this.index({ path: file, source: fileSource, attribution });
         filesIndexed++;
         totalChunks += r.totalChunks;
       } catch {
@@ -963,20 +1105,20 @@ export class ContentStore {
    * into fixed-size line groups. Unlike markdown indexing, this does not
    * look for headings — it chunks by line count with overlap.
    */
-  indexPlainText(
+  async indexPlainText(
     content: string,
     source: string,
     linesPerChunk: number = 20,
     attribution?: { sessionId?: string; eventId?: string },
     maxChunkBytes: number = MAX_CHUNK_BYTES,
-  ): IndexResult {
+  ): Promise<IndexResult> {
     if (!content || content.trim().length === 0) {
       return this.#insertChunks([], source, "", undefined, undefined, attribution);
     }
 
     const chunks = this.#chunkPlainText(content, linesPerChunk, maxChunkBytes);
 
-    return withRetry(() => this.#insertChunks(
+    return withRetryAsync(() => this.#insertChunks(
       chunks.map((c) => ({ ...c, hasCode: false })),
       source,
       content,
@@ -995,12 +1137,12 @@ export class ContentStore {
    *
    * Falls back to `indexPlainText` if the content is not valid JSON.
    */
-  indexJSON(
+  async indexJSON(
     content: string,
     source: string,
     maxChunkBytes: number = MAX_CHUNK_BYTES,
     attribution?: { sessionId?: string; eventId?: string },
-  ): IndexResult {
+  ): Promise<IndexResult> {
     if (!content || content.trim().length === 0) {
       return this.indexPlainText("", source, undefined, attribution, maxChunkBytes);
     }
@@ -1019,7 +1161,7 @@ export class ContentStore {
       return this.indexPlainText(content, source, undefined, attribution, maxChunkBytes);
     }
 
-    return withRetry(() => this.#insertChunks(chunks, source, content, undefined, undefined, attribution));
+    return withRetryAsync(() => this.#insertChunks(chunks, source, content, undefined, undefined, attribution));
   }
 
   // ── Shared DB Insertion ──
@@ -1029,24 +1171,31 @@ export class ContentStore {
    * into both FTS5 tables within a transaction and extracts vocabulary.
    * Uses cached prepared statements from #prepareStatements().
    */
-  #insertChunks(
+  async #insertChunks(
     chunks: Chunk[],
     label: string,
     text: string,
     filePath?: string,
     contentHash?: string,
     attribution?: { sessionId?: string; eventId?: string },
-  ): IndexResult {
+  ): Promise<IndexResult> {
     const codeChunks = chunks.filter((c) => c.hasCode).length;
     // FK columns on chunks. Empty-string fallback preserves the FTS5-friendly
     // "not-null but unattributed" sentinel used by legacy rows.
     const sessionIdCol = attribution?.sessionId ?? "";
     const eventIdCol = attribution?.eventId ?? "";
 
+    // Embeddings are computed BEFORE the transaction — better-sqlite3-style
+    // transactions run synchronously and can't await mid-flight. A null
+    // entry means that chunk's vector insert is skipped (graceful
+    // degradation: the chunk stays fully searchable via the lexical layers).
+    const embeddings = await Promise.all(chunks.map((c) => embed(c.content)));
+
     // Atomic dedup + insert: delete previous source with same label,
     // then insert new content — all within a single transaction.
     // Prevents stale results in iterative workflows. (See: GitHub issue #67)
     const transaction = this.#db.transaction(() => {
+      this.#stmtDeleteVectorsByLabel.run(label);
       this.#stmtDeleteChunksByLabel.run(label);
       this.#stmtDeleteChunksTrigramByLabel.run(label);
       this.#stmtDeleteSourcesByLabel.run(label);
@@ -1060,10 +1209,14 @@ export class ContentStore {
       const sourceId = Number(info.lastInsertRowid);
 
       const now = new Date().toISOString();
-      for (const chunk of chunks) {
+      for (const [i, chunk] of chunks.entries()) {
         const ct = chunk.hasCode ? "code" : "prose";
-        this.#stmtInsertChunk.run(chunk.title, chunk.content, sourceId, ct, null, sessionIdCol, eventIdCol, now);
+        const chunkInfo = this.#stmtInsertChunk.run(chunk.title, chunk.content, sourceId, ct, null, sessionIdCol, eventIdCol, now);
         this.#stmtInsertChunkTrigram.run(chunk.title, chunk.content, sourceId, ct, null, sessionIdCol, eventIdCol, now);
+        const vec = embeddings[i];
+        if (vec) {
+          this.#stmtInsertVector.run(chunkInfo.lastInsertRowid, encodeVector(vec));
+        }
       }
 
       return sourceId;
@@ -1239,20 +1392,99 @@ export class ContentStore {
     return result;
   }
 
+  // ── Vector Search (Layer 3, brute-force cosine) ──
+
+  // MiniLM-family embeddings are anisotropic — even semantically unrelated
+  // text pairs score ~0.0-0.15 cosine similarity rather than ~0, so without
+  // a floor the vector layer would always contribute its "least-bad"
+  // candidate to RRF fusion regardless of actual relevance, corrupting
+  // "no results" cases and dedup-isolation guarantees. Calibrated
+  // empirically: unrelated/nonsense text scored 0.01-0.04, a bare typo'd
+  // keyword against its real topic scored 0.34, a typo'd multi-word query
+  // scored 0.73. 0.3 cleanly separates noise from genuine (if loose) recall.
+  static readonly MIN_VECTOR_SIMILARITY = 0.3;
+
+  #vectorRowsToResults(rows: VectorRow[], queryEmbedding: Float32Array, limit: number): SearchResult[] {
+    return rows
+      .map((r) => ({
+        result: {
+          title: r.title,
+          content: r.content,
+          source: r.label,
+          contentType: r.content_type as "code" | "prose",
+          // No FTS5 snippet exists for a vector-only match — the full
+          // content is the closest honest substitute.
+          highlighted: r.content,
+          timestamp: r.timestamp ?? undefined,
+          sessionId: r.session_id ?? "",
+        } as Omit<SearchResult, "rank">,
+        sim: cosineSimilarity(queryEmbedding, decodeVector(r.embedding)),
+      }))
+      .filter(({ sim }) => sim >= ContentStore.MIN_VECTOR_SIMILARITY)
+      .sort((a, b) => b.sim - a.sim)
+      .slice(0, limit)
+      .map(({ result, sim }) => ({ ...result, rank: -sim }));
+  }
+
+  async #searchVector(
+    queryEmbedding: Float32Array,
+    limit: number,
+    source?: string,
+    contentType?: "code" | "prose",
+    sourceMatchMode: SourceMatchMode = "like",
+  ): Promise<SearchResult[]> {
+    // Fetch a generous candidate pool (no SQL-level ranking is possible for
+    // cosine similarity) and rank in JS. limit*20 keeps this bounded even
+    // on knowledge bases with far more chunks than any single search needs.
+    const fetchCap = Math.max(limit * 20, 200);
+
+    let stmt: PreparedStatement;
+    let params: unknown[];
+
+    if (source && contentType) {
+      stmt = sourceMatchMode === "exact" ? this.#stmtVectorExactContentType : this.#stmtVectorFilteredContentType;
+      params = sourceMatchMode === "exact"
+        ? [source, contentType, fetchCap]
+        : [this.#sourceFilterParam(source, sourceMatchMode), contentType, fetchCap];
+    } else if (source) {
+      stmt = sourceMatchMode === "exact" ? this.#stmtVectorExact : this.#stmtVectorFiltered;
+      params = sourceMatchMode === "exact"
+        ? [source, fetchCap]
+        : [this.#sourceFilterParam(source, sourceMatchMode), fetchCap];
+    } else if (contentType) {
+      stmt = this.#stmtVectorContentType;
+      params = [contentType, fetchCap];
+    } else {
+      stmt = this.#stmtVectorAll;
+      params = [fetchCap];
+    }
+
+    const rows = stmt.all(...params) as VectorRow[];
+    return this.#vectorRowsToResults(rows, queryEmbedding, limit);
+  }
+
   // ── Reciprocal Rank Fusion (Cormack et al. 2009) ──
 
-  #rrfSearch(
+  async #rrfSearch(
     query: string,
     limit: number,
     source?: string,
     contentType?: "code" | "prose",
     sourceMatchMode: SourceMatchMode = "like",
-  ): SearchResult[] {
+  ): Promise<SearchResult[]> {
     const K = 60; // Standard RRF constant
     const fetchLimit = Math.max(limit * 2, 10);
 
     const porterResults = this.search(query, fetchLimit, source, "OR", contentType, sourceMatchMode);
     const trigramResults = this.searchTrigram(query, fetchLimit, source, "OR", contentType, sourceMatchMode);
+    // Vector layer degrades gracefully: no embedding available (model still
+    // loading, WASM unsupported, offline first run) → empty layer, and
+    // porter+trigram fusion below behaves exactly as it did before this
+    // layer existed.
+    const queryEmbedding = await embed(query);
+    const vectorResults = queryEmbedding
+      ? await this.#searchVector(queryEmbedding, fetchLimit, source, contentType, sourceMatchMode)
+      : [];
 
     const scoreMap = new Map<string, { result: SearchResult; score: number }>();
     const key = (r: SearchResult) => `${r.source}::${r.title}`;
@@ -1268,6 +1500,16 @@ export class ContentStore {
     }
 
     for (const [i, r] of trigramResults.entries()) {
+      const k = key(r);
+      const existing = scoreMap.get(k);
+      if (existing) {
+        existing.score += 1 / (K + i + 1);
+      } else {
+        scoreMap.set(k, { result: r, score: 1 / (K + i + 1) });
+      }
+    }
+
+    for (const [i, r] of vectorResults.entries()) {
       const k = key(r);
       const existing = scoreMap.get(k);
       if (existing) {
@@ -1337,16 +1579,16 @@ export class ContentStore {
 
   // ── Unified Fallback Search ──
 
-  searchWithFallback(
+  async searchWithFallback(
     query: string,
     limit: number = 3,
     source?: string,
     contentType?: "code" | "prose",
     sourceMatchMode: SourceMatchMode = "like",
     sessionIdAllowSet?: Set<string>,
-  ): SearchResult[] {
+  ): Promise<SearchResult[]> {
     // Step 0: Auto-refresh stale file-backed sources before searching
-    this.#refreshStaleSources();
+    await this.#refreshStaleSources();
 
     // When a session-id allow-set is in play (issue #737 project filter),
     // fetch a larger candidate pool from the FTS5 layers so the post-filter
@@ -1356,8 +1598,8 @@ export class ContentStore {
     const fetchLimit = sessionIdAllowSet ? Math.max(limit * 8, 40) : limit;
     const sessionFilter = this.#makeSessionFilter(sessionIdAllowSet);
 
-    // Step 1: RRF fusion (porter OR + trigram OR → merge)
-    const rrfResults = this.#rrfSearch(query, fetchLimit, source, contentType, sourceMatchMode);
+    // Step 1: RRF fusion (porter OR + trigram OR + vector → merge)
+    const rrfResults = await this.#rrfSearch(query, fetchLimit, source, contentType, sourceMatchMode);
     const rrfFiltered = sessionFilter ? rrfResults.filter(sessionFilter) : rrfResults;
     if (rrfFiltered.length > 0) {
       const reranked = this.#applyProximityReranking(rrfFiltered.slice(0, limit), query);
@@ -1377,7 +1619,7 @@ export class ContentStore {
     const correctedQuery = correctedWords.join(" ");
 
     if (correctedQuery !== original) {
-      const fuzzyResults = this.#rrfSearch(correctedQuery, fetchLimit, source, contentType, sourceMatchMode);
+      const fuzzyResults = await this.#rrfSearch(correctedQuery, fetchLimit, source, contentType, sourceMatchMode);
       const fuzzyFiltered = sessionFilter ? fuzzyResults.filter(sessionFilter) : fuzzyResults;
       if (fuzzyFiltered.length > 0) {
         const reranked = this.#applyProximityReranking(fuzzyFiltered.slice(0, limit), correctedQuery);
@@ -1412,7 +1654,7 @@ export class ContentStore {
    * Uses mtime as a fast gate — only computes SHA-256 when mtime has advanced
    * past indexed_at. Gracefully skips deleted files and non-file sources.
    */
-  #refreshStaleSources(): void {
+  async #refreshStaleSources(): Promise<void> {
     this.lastRefreshCount = 0;
     const sources = this.#db.prepare(
       "SELECT label, file_path, content_hash, indexed_at FROM sources WHERE file_path IS NOT NULL",
@@ -1450,7 +1692,7 @@ export class ContentStore {
         // by going through index() which stores them. Since we pass
         // content, index() does NOT re-read; the bytes hashed above
         // are exactly the bytes indexed.
-        this.index({ content: newContent, path: src.file_path, source: src.label });
+        await this.index({ content: newContent, path: src.file_path, source: src.label });
         this.lastRefreshCount++;
       } catch {
         // Graceful degradation — never break search for stale detection

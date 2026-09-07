@@ -524,10 +524,10 @@ describe("Large Output Auto-Indexing", () => {
     for (let i = 0; i < 5000; i++) lines.push(`line ${i}: data_value_${i}`);
     const largeOutput = lines.join("\n");
 
-    const indexed = store.indexPlainText(largeOutput, "test:large-output");
+    const indexed = await store.indexPlainText(largeOutput, "test:large-output");
     assert.ok(indexed.totalChunks > 1, "Should be chunked into multiple sections");
 
-    const results = store.searchWithFallback("data_value_2500", 3, "test:large-output");
+    const results = await store.searchWithFallback("data_value_2500", 3, "test:large-output");
     assert.ok(results.length > 0, "Middle content should be searchable");
     assert.ok(results[0].content.includes("2500"), "Should find the middle line");
 
@@ -1320,7 +1320,7 @@ describe("ctx_index: projectRoot path resolution (#365)", () => {
   //   2. The ctx_index source-resolution decision lives in src/server.ts and
   //      must read `source ?? resolvedPath`, NOT `source ?? path` (which would
   //      preserve raw user-typed input and break dedup).
-  test("source-label dedup: identical labels collapse, raw user-typed paths would not", () => {
+  test("source-label dedup: identical labels collapse, raw user-typed paths would not", async () => {
     const store = new ContentStore(":memory:");
     const dir = mkdtempSync(join(tmpdir(), "source-label-dedup-"));
     const file = "foo.md";
@@ -1331,8 +1331,8 @@ describe("ctx_index: projectRoot path resolution (#365)", () => {
     try {
       // Post-fix simulation: server canonicalizes both spellings to `abs`
       // before calling store.index → single label → single row.
-      store.index({ content: readFileSync(abs, "utf-8"), path: abs, source: abs });
-      store.index({ content: readFileSync(abs, "utf-8"), path: abs, source: abs });
+      await store.index({ content: readFileSync(abs, "utf-8"), path: abs, source: abs });
+      await store.index({ content: readFileSync(abs, "utf-8"), path: abs, source: abs });
 
       const dedupResults = store.search(marker, 10);
       expect(dedupResults.length).toBe(1);
@@ -2017,12 +2017,12 @@ describe("Hook Injection", () => {
 });
 
 describe("Shared Knowledge Base (subagent -> main)", () => {
-  test("subagent index() is visible to main agent search()", () => {
+  test("subagent index() is visible to main agent search()", async () => {
     // Same ContentStore instance = same as shared MCP server process
     const store = new ContentStore(":memory:");
 
     // Simulate subagent indexing its research
-    store.index({
+    await store.index({
       content: [
         "# Zod Overview",
         "TypeScript-first schema validation library.",
@@ -2054,23 +2054,23 @@ describe("Shared Knowledge Base (subagent -> main)", () => {
     store.close();
   });
 
-  test("multiple subagents index into same KB with distinct sources", () => {
+  test("multiple subagents index into same KB with distinct sources", async () => {
     const store = new ContentStore(":memory:");
 
     // Subagent A indexes architecture research
-    store.index({
+    await store.index({
       content: "# Architecture\nMonorepo with pnpm workspaces. 15 packages.",
       source: "subagent-A:architecture",
     });
 
     // Subagent B indexes API research
-    store.index({
+    await store.index({
       content: "# API Endpoints\nREST + GraphQL. 47 endpoints total.",
       source: "subagent-B:api",
     });
 
     // Subagent C indexes contributor analysis
-    store.index({
+    await store.index({
       content: "# Contributors\nTop: @alice (312 commits), @bob (198 commits).",
       source: "subagent-C:contributors",
     });
@@ -2092,11 +2092,11 @@ describe("Shared Knowledge Base (subagent -> main)", () => {
     store.close();
   });
 
-  test("main agent can search subagent KB after subagent is done", () => {
+  test("main agent can search subagent KB after subagent is done", async () => {
     const store = new ContentStore(":memory:");
 
     // Subagent lifecycle: index → close (subagent done)
-    store.index({
+    await store.index({
       content: "# Security Audit\nNo critical vulnerabilities found. 3 medium severity issues in auth module.",
       source: "subagent:security-audit",
     });
@@ -2776,11 +2776,11 @@ describe("ctx_purge scoped handler (issue #520)", () => {
 // ─── KB purge behavioral (ContentStore) ─────────────────────────────────────
 
 describe("ContentStore purge behavior", () => {
-  test("cleanup() deletes DB files (including WAL and SHM)", () => {
+  test("cleanup() deletes DB files (including WAL and SHM)", async () => {
     const tmpPath = join(tmpdir(), `ctx-purge-test-${Date.now()}.db`);
     const store = new ContentStore(tmpPath);
 
-    store.index({ content: "test content for purge verification", source: "purge-test" });
+    await store.index({ content: "test content for purge verification", source: "purge-test" });
     expect(store.getStats().chunks).toBeGreaterThan(0);
 
     store.cleanup();
@@ -2791,11 +2791,11 @@ describe("ContentStore purge behavior", () => {
     expect(existsSync(tmpPath + "-shm")).toBe(false);
   });
 
-  test("index survives when cleanup is NOT called (--continue scenario)", () => {
+  test("index survives when cleanup is NOT called (--continue scenario)", async () => {
     const tmpPath = join(tmpdir(), `ctx-preserve-test-${Date.now()}.db`);
     const store = new ContentStore(tmpPath);
 
-    store.index({ content: "preserved content across sessions", source: "preserve-test" });
+    await store.index({ content: "preserved content across sessions", source: "preserve-test" });
     store.close();
 
     // Simulate --continue: reopen same DB
@@ -2809,18 +2809,18 @@ describe("ContentStore purge behavior", () => {
     store2.cleanup();
   });
 
-  test("store recovers after purge — new index works", () => {
+  test("store recovers after purge — new index works", async () => {
     const tmpPath = join(tmpdir(), `ctx-recovery-test-${Date.now()}.db`);
 
     // Phase 1: index and purge
     const store1 = new ContentStore(tmpPath);
-    store1.index({ content: "old content to be purged", source: "old" });
+    await store1.index({ content: "old content to be purged", source: "old" });
     store1.cleanup();
     expect(existsSync(tmpPath)).toBe(false);
 
     // Phase 2: create fresh store at same path, index new content
     const store2 = new ContentStore(tmpPath);
-    store2.index({ content: "fresh content after purge", source: "new" });
+    await store2.index({ content: "fresh content after purge", source: "new" });
 
     const results = store2.search("fresh content", 5);
     expect(results.length).toBeGreaterThan(0);
@@ -2832,10 +2832,10 @@ describe("ContentStore purge behavior", () => {
     store2.cleanup();
   });
 
-  test("double cleanup does not crash", () => {
+  test("double cleanup does not crash", async () => {
     const tmpPath = join(tmpdir(), `ctx-double-purge-${Date.now()}.db`);
     const store = new ContentStore(tmpPath);
-    store.index({ content: "some content", source: "test" });
+    await store.index({ content: "some content", source: "test" });
 
     // First cleanup
     store.cleanup();
@@ -4358,7 +4358,7 @@ describe("ctx_fetch_and_index cache key includes URL (Fix 6/10)", () => {
     expect(arg).toMatch(/cacheKey|storageLabel|composeFetchCacheKey/);
   });
 
-  test("ContentStore: per-(label,url) keys do not collide on getSourceMeta", () => {
+  test("ContentStore: per-(label,url) keys do not collide on getSourceMeta", async () => {
     const store = new ContentStore(":memory:");
     // Simulate two distinct URLs sharing a user-supplied "source" label,
     // but stored under composed keys per the fix.
@@ -4367,7 +4367,7 @@ describe("ctx_fetch_and_index cache key includes URL (Fix 6/10)", () => {
     const labelA = `Docs::${URL_A}`;
     const labelB = `Docs::${URL_B}`;
 
-    store.index({ content: "# A\nContent A unique alpha", source: labelA });
+    await store.index({ content: "# A\nContent A unique alpha", source: labelA });
     // Before fix: a second cache lookup with the bare "Docs" label would
     // hit A's meta and short-circuit. After fix: lookup uses labelB → miss.
     expect(store.getSourceMeta(labelB)).toBeNull();
@@ -4375,7 +4375,7 @@ describe("ctx_fetch_and_index cache key includes URL (Fix 6/10)", () => {
     expect(store.getSourceMeta(labelA)).not.toBeNull();
 
     // Now index B and verify both remain searchable independently.
-    store.index({ content: "# B\nContent B unique bravo", source: labelB });
+    await store.index({ content: "# B\nContent B unique bravo", source: labelB });
     const aResults = store.search("alpha", 5, labelA);
     const bResults = store.search("bravo", 5, labelB);
     expect(aResults.length).toBeGreaterThan(0);
@@ -6398,8 +6398,8 @@ describe("ctx_batch_execute query_scope (issue #696)", () => {
   test("formatBatchQueryResults default scope keeps batch-local tip", async () => {
     const { formatBatchQueryResults } = await import("../../src/server.js");
     const store = new ContentStore(":memory:");
-    store.index({ content: "# Section A\n\nValidation of frontmatter is critical.\n", source: "batch:cmd1" });
-    const lines = formatBatchQueryResults(store, ["validation"], "batch:cmd1");
+    await store.index({ content: "# Section A\n\nValidation of frontmatter is critical.\n", source: "batch:cmd1" });
+    const lines = await formatBatchQueryResults(store, ["validation"], "batch:cmd1");
     const text = lines.join("\n");
     expect(text).toMatch(/Results are scoped to this batch only/);
     expect(text).toMatch(/query_scope:\s*"global"/);
@@ -6408,8 +6408,8 @@ describe("ctx_batch_execute query_scope (issue #696)", () => {
   test("formatBatchQueryResults global scope drops batch tip and notes global scope", async () => {
     const { formatBatchQueryResults } = await import("../../src/server.js");
     const store = new ContentStore(":memory:");
-    store.index({ content: "# Section A\n\nValidation of frontmatter is critical.\n", source: "other:source" });
-    const lines = formatBatchQueryResults(store, ["validation"], "batch:cmd1", undefined, "global");
+    await store.index({ content: "# Section A\n\nValidation of frontmatter is critical.\n", source: "other:source" });
+    const lines = await formatBatchQueryResults(store, ["validation"], "batch:cmd1", undefined, "global");
     const text = lines.join("\n");
     expect(text).toMatch(/query_scope:\s*"global"/);
     expect(text).not.toMatch(/Results are scoped to this batch only/);
@@ -6446,8 +6446,8 @@ describe("ctx_stats cache observability + index_state (issue #697)", () => {
   test("ContentStore.getIndexState aggregates totals correctly", async () => {
     const store = new ContentStore(":memory:");
     expect(store.getIndexState()).toEqual({ totalChunks: 0, totalSources: 0, lastIndexedAt: undefined });
-    store.index({ content: "# A\n\nalpha\n", source: "src-alpha" });
-    store.index({ content: "# B\n\nbeta\n\n# C\n\ngamma\n", source: "src-beta" });
+    await store.index({ content: "# A\n\nalpha\n", source: "src-alpha" });
+    await store.index({ content: "# B\n\nbeta\n\n# C\n\ngamma\n", source: "src-beta" });
     const state = store.getIndexState();
     expect(state.totalSources).toBe(2);
     expect(state.totalChunks).toBeGreaterThanOrEqual(2);

@@ -90,7 +90,7 @@ export interface SearchResult {
   source: string;
   rank: number;
   contentType: "code" | "prose";
-  matchLayer?: "porter" | "trigram" | "fuzzy" | "rrf" | "rrf-fuzzy";
+  matchLayer?: "porter" | "trigram" | "vector" | "fuzzy" | "rrf" | "rrf-fuzzy";
   highlighted?: string;
   timestamp?: string;
   /**

@@ -1368,13 +1368,13 @@ export function extractSnippet(
 
 export type BatchQueryScope = "batch" | "global";
 
-export function formatBatchQueryResults(
+export async function formatBatchQueryResults(
   store: ContentStore,
   queries: string[],
   source: string,
   maxOutput = 80 * 1024,
   scope: BatchQueryScope = "batch",
-): string[] {
+): Promise<string[]> {
   const sections: string[] = [];
   let outputSize = 0;
 
@@ -1390,7 +1390,7 @@ export function formatBatchQueryResults(
       continue;
     }
 
-    const results = store.searchWithFallback(query, 3, searchSource, undefined, "exact");
+    const results = await store.searchWithFallback(query, 3, searchSource, undefined, "exact");
     sections.push(`## ${query}`);
     sections.push("");
     if (results.length > 0) {
@@ -1884,7 +1884,7 @@ __cm_main().catch(e=>{console.error(e);process.exitCode=1});${background ? '\nse
           trackIndexed(Buffer.byteLength(output));
           return trackResponse("ctx_execute", {
             content: [
-              { type: "text" as const, text: `${echo}${intentSearch(output, intent, isError ? `execute:${language}:error` : `execute:${language}`)}` },
+              { type: "text" as const, text: `${echo}${await intentSearch(output, intent, isError ? `execute:${language}:error` : `execute:${language}`)}` },
             ],
             isError,
           });
@@ -1894,7 +1894,7 @@ __cm_main().catch(e=>{console.error(e);process.exitCode=1});${background ? '\nse
           trackIndexed(Buffer.byteLength(output));
           return trackResponse("ctx_execute", {
             content: [
-              { type: "text" as const, text: `${echo}${intentSearch(output, "errors failures exceptions", isError ? `execute:${language}:error` : `execute:${language}`)}` },
+              { type: "text" as const, text: `${echo}${await intentSearch(output, "errors failures exceptions", isError ? `execute:${language}:error` : `execute:${language}`)}` },
             ],
             isError,
           });
@@ -1914,14 +1914,14 @@ __cm_main().catch(e=>{console.error(e);process.exitCode=1});${background ? '\nse
         trackIndexed(Buffer.byteLength(stdout));
         return trackResponse("ctx_execute", {
           content: [
-            { type: "text" as const, text: `${echo}${intentSearch(stdout, intent, `execute:${language}`)}` },
+            { type: "text" as const, text: `${echo}${await intentSearch(stdout, intent, `execute:${language}`)}` },
           ],
         });
       }
 
       // Auto-index large stdout into FTS5 — return pointer, not raw content
       if (Buffer.byteLength(stdout) > LARGE_OUTPUT_THRESHOLD) {
-        const indexed = indexStdout(stdout, `execute:${language}`);
+        const indexed = await indexStdout(stdout, `execute:${language}`);
         // Prepend echo to the first text content so provenance still surfaces
         const echoed = {
           ...indexed,
@@ -1955,13 +1955,13 @@ __cm_main().catch(e=>{console.error(e);process.exitCode=1});${background ? '\nse
 // Helper: index stdout into FTS5 knowledge base
 // ─────────────────────────────────────────────────────────
 
-function indexStdout(
+async function indexStdout(
   stdout: string,
   source: string,
-): { content: Array<{ type: "text"; text: string }> } {
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   const store = getStore();
   trackIndexed(Buffer.byteLength(stdout));
-  const indexed = store.index({ content: stdout, source, attribution: currentAttribution() });
+  const indexed = await store.index({ content: stdout, source, attribution: currentAttribution() });
   return {
     content: [
       {
@@ -1979,21 +1979,21 @@ function indexStdout(
 const INTENT_SEARCH_THRESHOLD = 5_000; // bytes — ~80-100 lines
 const LARGE_OUTPUT_THRESHOLD = 102_400; // 100KB — auto-index into FTS5, return pointer
 
-function intentSearch(
+async function intentSearch(
   stdout: string,
   intent: string,
   source: string,
   maxResults: number = 5,
-): string {
+): Promise<string> {
   const totalLines = stdout.split("\n").length;
   const totalBytes = Buffer.byteLength(stdout);
 
   // Index into the PERSISTENT store so user can ctx_search() later
   const persistent = getStore();
-  const indexed = persistent.indexPlainText(stdout, source, undefined, currentAttribution());
+  const indexed = await persistent.indexPlainText(stdout, source, undefined, currentAttribution());
 
   // Search the persistent store directly (porter → trigram → fuzzy)
-  let results = persistent.searchWithFallback(intent, maxResults, source);
+  let results = await persistent.searchWithFallback(intent, maxResults, source);
 
   // Extract distinctive terms as vocabulary hints for the LLM
   const distinctiveTerms = persistent.getDistinctiveTerms(indexed.sourceId);
@@ -2164,7 +2164,7 @@ EXAMPLE: ctx_execute_file(path: "data.csv", language: "javascript", code: "const
           trackIndexed(Buffer.byteLength(output));
           return trackResponse("ctx_execute_file", {
             content: [
-              { type: "text" as const, text: `${echo}${intentSearch(output, intent, isError ? `file:${path}:error` : `file:${path}`)}` },
+              { type: "text" as const, text: `${echo}${await intentSearch(output, intent, isError ? `file:${path}:error` : `file:${path}`)}` },
             ],
             isError,
           });
@@ -2174,7 +2174,7 @@ EXAMPLE: ctx_execute_file(path: "data.csv", language: "javascript", code: "const
           trackIndexed(Buffer.byteLength(output));
           return trackResponse("ctx_execute_file", {
             content: [
-              { type: "text" as const, text: `${echo}${intentSearch(output, "errors failures exceptions", isError ? `file:${path}:error` : `file:${path}`)}` },
+              { type: "text" as const, text: `${echo}${await intentSearch(output, "errors failures exceptions", isError ? `file:${path}:error` : `file:${path}`)}` },
             ],
             isError,
           });
@@ -2193,14 +2193,14 @@ EXAMPLE: ctx_execute_file(path: "data.csv", language: "javascript", code: "const
         trackIndexed(Buffer.byteLength(stdout));
         return trackResponse("ctx_execute_file", {
           content: [
-            { type: "text" as const, text: `${echo}${intentSearch(stdout, intent, `file:${path}`)}` },
+            { type: "text" as const, text: `${echo}${await intentSearch(stdout, intent, `file:${path}`)}` },
           ],
         });
       }
 
       // Auto-index large stdout into FTS5 — return pointer, not raw content
       if (Buffer.byteLength(stdout) > LARGE_OUTPUT_THRESHOLD) {
-        const indexed = indexStdout(stdout, `file:${path}`);
+        const indexed = await indexStdout(stdout, `file:${path}`);
         const echoed = {
           ...indexed,
           content: indexed.content.map((c, i) =>
@@ -2374,7 +2374,7 @@ EXAMPLE: ctx_index(path: "/path/to/large-spec.md", source: "openapi-v2-spec")`,
             return false; // fail-open consistent with checkFilePathDenyPolicy
           }
         };
-        const dirResult = store.indexDirectory({
+        const dirResult = await store.indexDirectory({
           path: resolvedPath,
           source: source ?? resolvedPath,
           attribution: currentAttribution(),
@@ -2415,7 +2415,7 @@ EXAMPLE: ctx_index(path: "/path/to/large-spec.md", source: "openapi-v2-spec")`,
         } catch { /* ignore — file read errors handled by store */ }
       }
       const store = getStore();
-      const result = store.index({ content, path: resolvedPath, source: source ?? resolvedPath, attribution: currentAttribution() });
+      const result = await store.index({ content, path: resolvedPath, source: source ?? resolvedPath, attribution: currentAttribution() });
 
       return trackResponse("ctx_index", {
         content: [
@@ -2712,7 +2712,7 @@ EXAMPLE: ctx_search(queries: ["last user prompt", "active skills", "open blocker
 
         let results;
         if (sort === "timeline") {
-          results = searchAllSources({
+          results = await searchAllSources({
             query: q,
             limit: effectiveLimit,
             store,
@@ -2726,7 +2726,7 @@ EXAMPLE: ctx_search(queries: ["last user prompt", "active skills", "open blocker
             projectScope,
           });
         } else {
-          results = store.searchWithFallback(
+          results = await store.searchWithFallback(
             q,
             effectiveLimit,
             source,
@@ -3381,7 +3381,7 @@ interface IndexedFetchResult {
  * fetched results and calls this one-at-a-time to avoid SQLite WAL contention
  * (PRD finding E).
  */
-function indexFetched(f: { url: string; source?: string; markdown: string; header: string }): IndexedFetchResult {
+async function indexFetched(f: { url: string; source?: string; markdown: string; header: string }): Promise<IndexedFetchResult> {
   const store = getStore();
   // Storage label composed via composeFetchCacheKey so two URLs sharing a
   // `source` label do not overwrite each other (commit 1f1243e). ctx_search()
@@ -3390,11 +3390,11 @@ function indexFetched(f: { url: string; source?: string; markdown: string; heade
   const attribution = currentAttribution();
   let indexed: IndexResult;
   if (f.header === "__CM_CT__:json") {
-    indexed = store.indexJSON(f.markdown, storageLabel, undefined, attribution);
+    indexed = await store.indexJSON(f.markdown, storageLabel, undefined, attribution);
   } else if (f.header === "__CM_CT__:text") {
-    indexed = store.indexPlainText(f.markdown, storageLabel, undefined, attribution);
+    indexed = await store.indexPlainText(f.markdown, storageLabel, undefined, attribution);
   } else {
-    indexed = store.index({ content: f.markdown, source: storageLabel, attribution });
+    indexed = await store.index({ content: f.markdown, source: storageLabel, attribution });
   }
   // Track AFTER the FTS5 write succeeds — failed indexes shouldn't inflate the counter.
   trackIndexed(Buffer.byteLength(f.markdown));
@@ -3564,7 +3564,7 @@ EXAMPLE: ctx_fetch_and_index(
         // network round-trip + re-indexed. Counted here so ctx_stats can
         // report nominal cache_hit_rate alongside the existing hit metrics.
         sessionStats.cacheMisses++;
-        finalized.push({ kind: "fetched", indexed: indexFetched(v) });
+        finalized.push({ kind: "fetched", indexed: await indexFetched(v) });
       }
     }
 
@@ -3828,7 +3828,7 @@ EXAMPLE: ctx_batch_execute(
         .map((c) => c.label)
         .join(",")
         .slice(0, 80)}`;
-      const indexed = store.index({ content: stdout, source, attribution: currentAttribution() });
+      const indexed = await store.index({ content: stdout, source, attribution: currentAttribution() });
 
       // Commands inventory — list what the agent actually ran so the
       // response itself documents intent, not just per-section echoes.
@@ -3853,7 +3853,7 @@ EXAMPLE: ctx_batch_execute(
       // When the caller passes query_scope: "global", searches reach the entire
       // persistent index in the same round trip. Cross-source search remains
       // available via explicit ctx_search() as well.
-      const queryResults = formatBatchQueryResults(store, queries, source, undefined, query_scope);
+      const queryResults = await formatBatchQueryResults(store, queries, source, undefined, query_scope);
 
       // Get searchable terms for edge cases where follow-up is needed
       const distinctiveTerms = store.getDistinctiveTerms

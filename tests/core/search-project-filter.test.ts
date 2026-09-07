@@ -46,21 +46,21 @@ function createSessionDB(): SessionDB {
 // ═══════════════════════════════════════════════════════════
 
 describe("Slice 1: ContentStore.searchWithFallback sessionIdAllowSet", () => {
-  test("returns only chunks whose attribution session_id is in the allow-set", () => {
+  test("returns only chunks whose attribution session_id is in the allow-set", async () => {
     const store = createStore();
 
-    store.index({
+    await store.index({
       content: "Authentication middleware validates JWT tokens for project-a flows.",
       source: "session-events-a",
       attribution: { sessionId: "session-A" },
     });
-    store.index({
+    await store.index({
       content: "Authentication middleware validates JWT tokens for project-b flows.",
       source: "session-events-b",
       attribution: { sessionId: "session-B" },
     });
 
-    const results = store.searchWithFallback(
+    const results = await store.searchWithFallback(
       "authentication JWT",
       10,
       undefined,
@@ -73,27 +73,27 @@ describe("Slice 1: ContentStore.searchWithFallback sessionIdAllowSet", () => {
     expect(results.every((r) => r.source === "session-events-a")).toBe(true);
   });
 
-  test("preserves legacy session_id='' chunks alongside allow-set matches", () => {
+  test("preserves legacy session_id='' chunks alongside allow-set matches", async () => {
     const store = createStore();
 
-    store.index({
+    await store.index({
       content: "Authentication routes use Bearer tokens (project-a).",
       source: "session-events-a",
       attribution: { sessionId: "session-A" },
     });
-    store.index({
+    await store.index({
       content: "Authentication routes use Bearer tokens (project-b).",
       source: "session-events-b",
       attribution: { sessionId: "session-B" },
     });
     // Legacy unattributed chunk — pre-attribution data must remain visible
     // regardless of project scope (cross-project public knowledge surface).
-    store.index({
+    await store.index({
       content: "Authentication routes use Bearer tokens (legacy unattributed).",
       source: "user-indexed-legacy",
     });
 
-    const results = store.searchWithFallback(
+    const results = await store.searchWithFallback(
       "authentication Bearer tokens",
       10,
       undefined,
@@ -108,22 +108,22 @@ describe("Slice 1: ContentStore.searchWithFallback sessionIdAllowSet", () => {
     expect(labels).not.toContain("session-events-b");
   });
 
-  test("returns identical results to today when sessionIdAllowSet is undefined (no-op)", () => {
+  test("returns identical results to today when sessionIdAllowSet is undefined (no-op)", async () => {
     const store = createStore();
 
-    store.index({
+    await store.index({
       content: "Project-A authentication notes about JWT.",
       source: "events-a",
       attribution: { sessionId: "S-A" },
     });
-    store.index({
+    await store.index({
       content: "Project-B authentication notes about JWT.",
       source: "events-b",
       attribution: { sessionId: "S-B" },
     });
 
-    const baseline = store.searchWithFallback("authentication JWT", 10);
-    const withUndefined = store.searchWithFallback(
+    const baseline = await store.searchWithFallback("authentication JWT", 10);
+    const withUndefined = await store.searchWithFallback(
       "authentication JWT",
       10,
       undefined,
@@ -136,19 +136,19 @@ describe("Slice 1: ContentStore.searchWithFallback sessionIdAllowSet", () => {
       .toEqual(baseline.map((r) => r.source).sort());
   });
 
-  test("empty allow-set returns only legacy session_id='' chunks", () => {
+  test("empty allow-set returns only legacy session_id='' chunks", async () => {
     const store = createStore();
-    store.index({
+    await store.index({
       content: "Attributed chunk with non-empty session_id.",
       source: "attributed",
       attribution: { sessionId: "S1" },
     });
-    store.index({
+    await store.index({
       content: "Legacy unattributed chunk.",
       source: "legacy",
     });
 
-    const results = store.searchWithFallback(
+    const results = await store.searchWithFallback(
       "chunk",
       10,
       undefined,
@@ -216,7 +216,7 @@ describe("Slice 2: SessionDB.getSessionIdsForProject", () => {
 // ═══════════════════════════════════════════════════════════
 
 describe("Slice 3: searchAllSources projectScope", () => {
-  test("projectScope filters ContentStore via SessionDB-derived allow-set", () => {
+  test("projectScope filters ContentStore via SessionDB-derived allow-set", async () => {
     const store = createStore();
     const db = createSessionDB();
 
@@ -229,18 +229,18 @@ describe("Slice 3: searchAllSources projectScope", () => {
     db.insertEvent(sB, { type: "x", category: "x", data: "_", priority: 2 },
       "PostToolUse", { projectDir: "/proj-b", source: "env", confidence: 1 });
 
-    store.index({
+    await store.index({
       content: "Deploy script for project A staging.",
       source: "ev-a",
       attribution: { sessionId: sA },
     });
-    store.index({
+    await store.index({
       content: "Deploy script for project B staging.",
       source: "ev-b",
       attribution: { sessionId: sB },
     });
 
-    const results = searchAllSources({
+    const results = await searchAllSources({
       query: "deploy staging",
       limit: 10,
       store,
@@ -253,7 +253,7 @@ describe("Slice 3: searchAllSources projectScope", () => {
     expect(results.every((r) => r.source === "ev-a")).toBe(true);
   });
 
-  test("projectScope=null spans all projects (no filter)", () => {
+  test("projectScope=null spans all projects (no filter)", async () => {
     const store = createStore();
     const db = createSessionDB();
     const sA = `s-a-${randomUUID()}`;
@@ -265,14 +265,14 @@ describe("Slice 3: searchAllSources projectScope", () => {
     db.insertEvent(sB, { type: "x", category: "x", data: "_", priority: 2 },
       "PostToolUse", { projectDir: "/proj-b", source: "env", confidence: 1 });
 
-    store.index({
+    await store.index({
       content: "Deploy alpha A.", source: "ev-a", attribution: { sessionId: sA },
     });
-    store.index({
+    await store.index({
       content: "Deploy beta B.", source: "ev-b", attribution: { sessionId: sB },
     });
 
-    const results = searchAllSources({
+    const results = await searchAllSources({
       query: "deploy",
       limit: 10,
       store,
@@ -286,7 +286,7 @@ describe("Slice 3: searchAllSources projectScope", () => {
     expect(labels.has("ev-b")).toBe(true);
   });
 
-  test("projectScope undefined preserves today's unfiltered behaviour", () => {
+  test("projectScope undefined preserves today's unfiltered behaviour", async () => {
     const store = createStore();
     const db = createSessionDB();
     const sA = `s-a-${randomUUID()}`;
@@ -294,14 +294,14 @@ describe("Slice 3: searchAllSources projectScope", () => {
     db.insertEvent(sA, { type: "x", category: "x", data: "_", priority: 2 },
       "PostToolUse", { projectDir: "/proj-a", source: "env", confidence: 1 });
 
-    store.index({
+    await store.index({
       content: "Apple pie recipe.", source: "ev-a", attribution: { sessionId: sA },
     });
-    store.index({
+    await store.index({
       content: "Apple pie alternative.", source: "ev-orphan",
     });
 
-    const results = searchAllSources({
+    const results = await searchAllSources({
       query: "apple pie",
       limit: 10,
       store,
