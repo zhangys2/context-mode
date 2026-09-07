@@ -85,7 +85,7 @@ async function main() {
       console.log(html);
     `;
     const result = await executor.execute({ language: "javascript", code: htmlCode });
-    const indexed = store1.index({ content: result.stdout, source: "example.com" });
+    const indexed = await store1.index({ content: result.stdout, source: "example.com" });
     const output = `Indexed ${indexed.totalChunks} sections (${indexed.codeChunks} with code) from: example.com`;
     return { output, details: `${indexed.totalChunks} chunks` };
   });
@@ -116,7 +116,7 @@ async function main() {
       `;
       const result = await executor.execute({ language: "javascript", code: htmlCode });
       const store2 = new ContentStore();
-      const indexed = store2.index({ content: result.stdout, source: "httpbin.org" });
+      const indexed = await store2.index({ content: result.stdout, source: "httpbin.org" });
       const output = `Indexed ${indexed.totalChunks} sections (${indexed.codeChunks} with code) from: httpbin.org`;
       store2.close();
       return { output, details: `${indexed.totalChunks} chunks` };
@@ -272,7 +272,7 @@ async function main() {
   const reactRawBytes = Buffer.byteLength(reactRaw);
 
   await benchmark("index+search", "Context7 React docs → search useEffect", reactRawBytes, async () => {
-    store.index({ content: reactRaw, source: "Context7: React" });
+    await store.index({ content: reactRaw, source: "Context7: React" });
     const results = store.search("useEffect cleanup", 2);
     const output = results.map((r, i) => `[${i + 1}] ${r.title}: ${r.content.substring(0, 80)}...`).join("\n");
     return { output, details: `${results.length} results` };
@@ -285,7 +285,7 @@ async function main() {
     const supaRawBytes = Buffer.byteLength(supaRaw);
 
     await benchmark("index+search", "Context7 Supabase Edge → search RLS", supaRawBytes, async () => {
-      store.index({ content: supaRaw, source: "Context7: Supabase" });
+      await store.index({ content: supaRaw, source: "Context7: Supabase" });
       const results = store.search("edge function deploy", 2);
       const output = results.map((r, i) => `[${i + 1}] ${r.title}: ${r.content.substring(0, 80)}...`).join("\n");
       return { output, details: `${results.length} results` };
@@ -299,7 +299,7 @@ async function main() {
     const nextRawBytes = Buffer.byteLength(nextRaw);
 
     await benchmark("index+search", "Context7 Next.js docs → search routing", nextRawBytes, async () => {
-      store.index({ content: nextRaw, source: "Context7: Next.js" });
+      await store.index({ content: nextRaw, source: "Context7: Next.js" });
       const results = store.search("app router", 2);
       const output = results.map((r, i) => `[${i + 1}] ${r.title}: ${r.content.substring(0, 80)}...`).join("\n");
       return { output, details: `${results.length} results` };

@@ -28,7 +28,7 @@ interface BenchmarkResult {
 
 const results: BenchmarkResult[] = [];
 
-function benchmark(opts: {
+async function benchmark(opts: {
   scenario: string;
   source: string;
   content: string;
@@ -37,7 +37,7 @@ function benchmark(opts: {
   const store = new ContentStore();
   const rawBytes = Buffer.byteLength(opts.content);
 
-  const indexed = store.index({ content: opts.content, source: opts.source });
+  const indexed = await store.index({ content: opts.content, source: opts.source });
 
   let totalSearchBytes = 0;
   let hasExactCode = true;
@@ -90,7 +90,7 @@ async function main() {
   }
 
   results.push(
-    benchmark({
+      await benchmark({
       scenario: "Supabase Edge Functions (5 examples)",
       source: "Context7: Supabase",
       content: readFileSync(supabaseFixture, "utf-8"),
@@ -104,7 +104,7 @@ async function main() {
 
   // ===== CONTEXT7: React useEffect =====
   results.push(
-    benchmark({
+      await benchmark({
       scenario: "React useEffect docs",
       source: "Context7: React",
       content: readFileSync(
@@ -121,7 +121,7 @@ async function main() {
 
   // ===== CONTEXT7: Next.js App Router =====
   results.push(
-    benchmark({
+      await benchmark({
       scenario: "Next.js App Router docs",
       source: "Context7: Next.js",
       content: readFileSync(
@@ -138,7 +138,7 @@ async function main() {
 
   // ===== CONTEXT7: Tailwind CSS =====
   results.push(
-    benchmark({
+      await benchmark({
       scenario: "Tailwind CSS docs",
       source: "Context7: Tailwind",
       content: readFileSync(
@@ -156,7 +156,7 @@ async function main() {
   const skillFile = join(skillDir, "SKILL.md");
   if (existsSync(skillFile)) {
     results.push(
-      benchmark({
+      await benchmark({
         scenario: "Skill: context-mode (main prompt)",
         source: "Skill: context-mode",
         content: readFileSync(skillFile, "utf-8"),
@@ -189,7 +189,7 @@ async function main() {
 
     if (combinedContent.length > 0) {
       results.push(
-        benchmark({
+      await benchmark({
           scenario: "Skill references (4 files combined)",
           source: "Skill Refs: context-mode",
           content: combinedContent,
@@ -205,7 +205,7 @@ async function main() {
 
   // ===== MCP tools/list =====
   results.push(
-    benchmark({
+      await benchmark({
       scenario: "MCP tools/list (40 tools)",
       source: "MCP: tools/list",
       content: (() => {

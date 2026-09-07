@@ -67,7 +67,7 @@ export interface SearchAllSourcesOpts {
  * Errors in any single source are caught and logged — partial results
  * are always returned.
  */
-export function searchAllSources(opts: SearchAllSourcesOpts): UnifiedSearchResult[] {
+export async function searchAllSources(opts: SearchAllSourcesOpts): Promise<UnifiedSearchResult[]> {
   const {
     query,
     limit,
@@ -104,7 +104,7 @@ export function searchAllSources(opts: SearchAllSourcesOpts): UnifiedSearchResul
 
   // ── Source 1: ContentStore (always, both modes) ──
   try {
-    const storeResults = store.searchWithFallback(
+    const storeResults = await store.searchWithFallback(
       query,
       limit,
       source,

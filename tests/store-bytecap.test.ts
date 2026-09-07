@@ -39,11 +39,11 @@ function storedChunkSizes(dbPath: string): number[] {
 }
 
 describe("#chunkPlainText byte cap (#781)", () => {
-  test("a single huge line is split into byte-capped chunks", () => {
+  test("a single huge line is split into byte-capped chunks", async () => {
     const dbPath = tmpDbPath("line");
     const store = new ContentStore(dbPath);
     // One line, no newlines, ~3x the cap — the <= linesPerChunk fast path.
-    store.indexPlainText("A".repeat(MAX_CHUNK_BYTES * 3), "huge-line");
+    await store.indexPlainText("A".repeat(MAX_CHUNK_BYTES * 3), "huge-line");
     store.close();
 
     const sizes = storedChunkSizes(dbPath);
@@ -53,13 +53,13 @@ describe("#chunkPlainText byte cap (#781)", () => {
     }
   });
 
-  test("oversized line-groups are sub-split below the cap", () => {
+  test("oversized line-groups are sub-split below the cap", async () => {
     const dbPath = tmpDbPath("group");
     const store = new ContentStore(dbPath);
     // 40 dense lines (~300B each) → 20-line groups join to ~6KB > cap.
     const line = "token ".repeat(50).trim();
     const content = Array.from({ length: 40 }, () => line).join("\n");
-    store.indexPlainText(content, "dense-log");
+    await store.indexPlainText(content, "dense-log");
     store.close();
 
     const sizes = storedChunkSizes(dbPath);
@@ -69,7 +69,7 @@ describe("#chunkPlainText byte cap (#781)", () => {
     }
   });
 
-  test("blank-line sections in the 4097–4999B band respect the cap", () => {
+  test("blank-line sections in the 4097–4999B band respect the cap", async () => {
     const dbPath = tmpDbPath("section");
     const store = new ContentStore(dbPath);
     // 3 blank-line-separated sections, each ~4500B: passes the old
@@ -77,7 +77,7 @@ describe("#chunkPlainText byte cap (#781)", () => {
     // each section exceeds MAX_CHUNK_BYTES and was stored uncapped.
     const section = "a".repeat(4500);
     const content = [section, section, section].join("\n\n");
-    store.indexPlainText(content, "blank-sections");
+    await store.indexPlainText(content, "blank-sections");
     store.close();
 
     const sizes = storedChunkSizes(dbPath);
@@ -87,12 +87,12 @@ describe("#chunkPlainText byte cap (#781)", () => {
     }
   });
 
-  test("a long multibyte (CJK) line is split by bytes, not characters", () => {
+  test("a long multibyte (CJK) line is split by bytes, not characters", async () => {
     const dbPath = tmpDbPath("cjk");
     const store = new ContentStore(dbPath);
     // 4096 CJK code points = 12288 UTF-8 bytes on one line. Character-count
     // slicing keeps a 4096-char (12288B) piece — far above the cap.
-    store.indexPlainText("你".repeat(MAX_CHUNK_BYTES), "cjk-line");
+    await store.indexPlainText("你".repeat(MAX_CHUNK_BYTES), "cjk-line");
     store.close();
 
     const sizes = storedChunkSizes(dbPath);
@@ -102,12 +102,12 @@ describe("#chunkPlainText byte cap (#781)", () => {
     }
   });
 
-  test("a long emoji line never splits a surrogate pair and stays capped", () => {
+  test("a long emoji line never splits a surrogate pair and stays capped", async () => {
     const dbPath = tmpDbPath("emoji");
     const store = new ContentStore(dbPath);
     // 2048 emoji = 4096 UTF-16 units = 8192 UTF-8 bytes on one line.
     // Byte-accurate splitting must not cut a 4-byte sequence in half.
-    store.indexPlainText("🎉".repeat(2048), "emoji-line");
+    await store.indexPlainText("🎉".repeat(2048), "emoji-line");
     store.close();
 
     const sizes = storedChunkSizes(dbPath);

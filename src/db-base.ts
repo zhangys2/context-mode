@@ -453,6 +453,35 @@ export function withRetry<T>(fn: () => T, delays: number[] = [100, 500, 2000]): 
   );
 }
 
+/**
+ * Async counterpart to withRetry(), for callers whose retried operation
+ * itself awaits (e.g. ContentStore's embedding-then-insert path). Same
+ * SQLITE_BUSY / "database is locked" matching and delay schedule, but
+ * awaits a real timer instead of busy-waiting — a sync busy-wait here
+ * would block the event loop during every retry backoff.
+ */
+export async function withRetryAsync<T>(fn: () => Promise<T>, delays: number[] = [100, 500, 2000]): Promise<T> {
+  let lastError: Error | undefined;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("SQLITE_BUSY") && !msg.includes("database is locked")) {
+        throw err;
+      }
+      lastError = err instanceof Error ? err : new Error(msg);
+      if (attempt < delays.length) {
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+      }
+    }
+  }
+  throw new Error(
+    `SQLITE_BUSY: database is locked after ${delays.length} retries. ` +
+    `Original error: ${lastError?.message}`
+  );
+}
+
 // ─────────────────────────────────────────────────────────
 // Corrupt DB recovery (#244)
 // ─────────────────────────────────────────────────────────

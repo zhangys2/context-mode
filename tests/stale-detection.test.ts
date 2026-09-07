@@ -52,7 +52,7 @@ afterEach(() => {
 // ── Tests ──
 
 describe("Hash-based stale detection", () => {
-  test("index a file, search returns results without stale refresh note", () => {
+  test("index a file, search returns results without stale refresh note", async () => {
     const store = createStore();
     tempStores.push(store);
 
@@ -62,7 +62,7 @@ describe("Hash-based stale detection", () => {
     writeFileSync(filePath, "# Database Guide\n\nPostgreSQL connection pooling best practices for production workloads.");
 
     // Index the file via path
-    const indexResult = store.index({ path: filePath, source: filePath });
+    const indexResult = await store.index({ path: filePath, source: filePath });
     expect(indexResult.totalChunks).toBeGreaterThan(0);
     expect(indexResult.label).toBe(filePath);
 
@@ -81,7 +81,7 @@ describe("Hash-based stale detection", () => {
     expect((meta as any).filePath).toBe(filePath);
   });
 
-  test("index a file, modify it, search auto-refreshes and returns new content", () => {
+  test("index a file, modify it, search auto-refreshes and returns new content", async () => {
     const store = createStore();
     tempStores.push(store);
 
@@ -91,7 +91,7 @@ describe("Hash-based stale detection", () => {
     writeFileSync(filePath, "# Original Guide\n\nOriginal content about databases and SQL queries.");
 
     // Index the file
-    store.index({ path: filePath, source: filePath });
+    await store.index({ path: filePath, source: filePath });
 
     // Verify original content is searchable
     const originalResults = store.search("databases SQL queries", 3);
@@ -109,7 +109,7 @@ describe("Hash-based stale detection", () => {
     }
 
     // Search for NEW content — should auto-detect stale file and re-index
-    const refreshedResults = store.searchWithFallback("REST APIs GraphQL endpoints", 3);
+    const refreshedResults = await store.searchWithFallback("REST APIs GraphQL endpoints", 3);
     expect(refreshedResults.length).toBeGreaterThan(0);
     expect(refreshedResults[0].content).toContain("APIs");
 
@@ -129,12 +129,12 @@ describe("Hash-based stale detection", () => {
     expect((meta as any).contentHash).toBe(expectedHash);
   });
 
-  test("index content without path, search never triggers stale check", () => {
+  test("index content without path, search never triggers stale check", async () => {
     const store = createStore();
     tempStores.push(store);
 
     // Index with content string only (no file path)
-    const indexResult = store.index({
+    const indexResult = await store.index({
       content: "# In-Memory Guide\n\nRedis caching strategies for session management.",
       source: "redis-guide",
     });
@@ -153,7 +153,7 @@ describe("Hash-based stale detection", () => {
     expect((meta as any).contentHash).toBeNull();
   });
 
-  test("index a file, delete it, search returns results without crashing", () => {
+  test("index a file, delete it, search returns results without crashing", async () => {
     const store = createStore();
     tempStores.push(store);
 
@@ -162,7 +162,7 @@ describe("Hash-based stale detection", () => {
     tempFiles.push(filePath);
     writeFileSync(filePath, "# Kubernetes Guide\n\nPod scheduling and resource limits configuration.");
 
-    store.index({ path: filePath, source: filePath });
+    await store.index({ path: filePath, source: filePath });
 
     // Verify it was indexed
     const beforeResults = store.search("Kubernetes Pod scheduling", 3);
