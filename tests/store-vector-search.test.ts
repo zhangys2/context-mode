@@ -106,7 +106,7 @@ describe("semantic recall via the vector layer", () => {
   );
 
   test(
-    "gracefully returns lexical-only results when the query embeds to null",
+    "unique lexical token is found even with a real (non-null) query embedding in play",
     async () => {
       const store = createStore();
       try {
@@ -114,9 +114,13 @@ describe("semantic recall via the vector layer", () => {
           content: "# Exact Match\n\nUnique token xyzzyplugh appears here.",
           source: "vector-test-fallback",
         });
-        // Whitespace-only queries can't be embedded (embed() returns null
-        // for them) but also can't lexically match anything — this exercises
-        // the "no crash, just empty" path through the vector layer.
+        // "xyzzyplugh" is a real, if nonsensical, token — it embeds fine, so
+        // this does NOT exercise null-embedding degradation (that path —
+        // embed() actually failing — is covered by
+        // tests/embed-failure.test.ts, which mocks the failure instead of
+        // relying on a query that happens not to trigger it). This is a
+        // plain regression check that an exact, unambiguous lexical match
+        // still surfaces correctly now that RRF fuses in a third layer.
         const results = await store.searchWithFallback("xyzzyplugh", 3, "vector-test-fallback", undefined, "exact");
         expect(results.length).toBeGreaterThan(0);
       } finally {
